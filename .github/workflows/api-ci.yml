@@ -32,7 +32,14 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     env:
-      DATABASE_URL: postgresql://agentos:agentos_ci_password@localhost:5432/agentos
+      DATABASE_URL: postgresql://agentos_app:agentos_ci_app_password@localhost:5432/agentos
+      MIGRATION_DATABASE_URL: postgresql://agentos:agentos_ci_password@localhost:5432/agentos
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGDATABASE: agentos
+      PGUSER: agentos
+      PGPASSWORD: agentos_ci_password
+      AGENTOS_APP_PASSWORD: agentos_ci_app_password
     defaults:
       run:
         working-directory: apps/api
@@ -50,11 +57,14 @@ jobs:
       - name: Install API and development dependencies
         run: python -m pip install -e ".[dev]"
 
-      - name: Apply database migrations
+      - name: Create restricted application database role
+        run: sh docker/postgres/001-create-app-role.sh
+
+      - name: Apply database migrations as administrator
         run: python scripts/apply_migrations.py
 
       - name: Lint
         run: ruff check app tests scripts
 
-      - name: Run unit and PostgreSQL integration tests
+      - name: Run unit and PostgreSQL integration tests as application role
         run: pytest -q
