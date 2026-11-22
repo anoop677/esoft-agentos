@@ -19,7 +19,6 @@ async def test_postgres_rls_isolates_tenant_records():
 
     tenant_a = f"rls-test-a-{uuid4()}"
     tenant_b = f"rls-test-b-{uuid4()}"
-    agent_a_id = None
 
     async def set_tenant(tenant_id: str | None):
         await connection.fetchval(
