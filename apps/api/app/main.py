@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.v1.identity import router as identity_router
 from app.core.config import get_settings
 from app.health import router as health_router
 from app.infrastructure.connections import close_connections, open_connections
@@ -31,10 +32,11 @@ app.add_middleware(
     allow_origins=settings.allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Dev-Tenant-ID"],
 )
 
 app.include_router(health_router)
+app.include_router(identity_router)
 
 
 @app.get("/", tags=["system"])
