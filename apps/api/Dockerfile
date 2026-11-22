@@ -8,6 +8,8 @@ WORKDIR /srv/agentos
 
 COPY pyproject.toml ./
 COPY app ./app
+COPY migrations ./migrations
+COPY scripts ./scripts
 
 RUN pip install --upgrade pip && pip install .
 
