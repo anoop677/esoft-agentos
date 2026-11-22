@@ -9,9 +9,11 @@ MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations"
 
 
 async def apply_migrations() -> None:
-    database_url = os.environ.get("DATABASE_URL")
+    database_url = os.environ.get("MIGRATION_DATABASE_URL") or os.environ.get("DATABASE_URL")
     if not database_url:
-        raise RuntimeError("DATABASE_URL must be set to apply database migrations")
+        raise RuntimeError(
+            "MIGRATION_DATABASE_URL or DATABASE_URL must be set to apply database migrations"
+        )
 
     connection = await asyncpg.connect(database_url)
     try:
