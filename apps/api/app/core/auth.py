@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -80,7 +81,11 @@ async def get_current_principal(
         )
 
     try:
-        claims = verify_access_token(credentials.credentials, settings)
+        claims = await asyncio.to_thread(
+            verify_access_token,
+            credentials.credentials,
+            settings,
+        )
     except PyJWKClientConnectionError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
