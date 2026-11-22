@@ -1,7 +1,7 @@
 import asyncio
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any
+from typing import Annotated, Any
 
 import jwt
 from fastapi import Depends, Header, HTTPException, status
@@ -50,8 +50,14 @@ def verify_access_token(token: str, settings: Settings) -> dict[str, Any]:
 
 
 async def get_current_principal(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-    dev_tenant_id: str | None = Header(default=None, alias="X-Dev-Tenant-ID"),
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None,
+        Depends(bearer_scheme),
+    ] = None,
+    dev_tenant_id: Annotated[
+        str | None,
+        Header(alias="X-Dev-Tenant-ID"),
+    ] = None,
 ) -> Principal:
     """Resolve an authenticated principal; dev header mode is local-only."""
     settings = get_settings()
