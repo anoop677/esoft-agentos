@@ -1,5 +1,7 @@
+import asyncpg
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from redis.exceptions import RedisError
 
 router = APIRouter(tags=["health"])
 
@@ -19,19 +21,22 @@ async def readiness(request: Request):
     if db_pool is None or redis_client is None:
         return JSONResponse(
             status_code=503,
-            content={"status": "not_ready", "checks": {"database": "unavailable", "redis": "unavailable"}},
+            content={
+                "status": "not_ready",
+                "checks": {"database": "unavailable", "redis": "unavailable"},
+            },
         )
 
     checks = {"database": "ok", "redis": "ok"}
     try:
         async with db_pool.acquire() as connection:
             await connection.fetchval("SELECT 1")
-    except Exception:
+    except (asyncpg.PostgresError, OSError, TimeoutError):
         checks["database"] = "error"
 
     try:
         await redis_client.ping()
-    except Exception:
+    except (RedisError, OSError, TimeoutError):
         checks["redis"] = "error"
 
     healthy = all(value == "ok" for value in checks.values())
