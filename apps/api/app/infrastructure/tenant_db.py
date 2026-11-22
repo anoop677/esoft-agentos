@@ -13,9 +13,8 @@ async def get_tenant_connection(
 ) -> AsyncIterator[asyncpg.Connection]:
     """Yield a tenant-authorized connection with transaction-local RLS context.
 
-    Tenant scope is derived only from the verified Principal. Before exposing
-    the connection, the active tenant and caller membership are checked inside
-    the same transaction and under the same RLS policy as subsequent queries.
+    Tenant scope comes only from the verified principal. Membership role is
+    loaded from the tenant database, not trusted from Keycloak realm roles.
     """
     pool = getattr(request.app.state, "db_pool", None)
     if pool is None:
@@ -40,19 +39,33 @@ async def get_tenant_connection(
                 detail="Tenant is unavailable",
             )
 
-        active_membership = await connection.fetchval(
+        membership = await connection.fetchrow(
             """
-            SELECT 1
+            SELECT role
             FROM public.tenant_memberships
             WHERE tenant_id = $1 AND subject_id = $2 AND status = 'active'
             """,
             principal.tenant_id,
             principal.subject,
         )
-        if not active_membership:
+        if membership is None:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="User is not an active member of this tenant",
             )
 
+        request.state.tenant_role = membership["role"]
         yield connection
+
+
+async def get_tenant_admin_connection(
+    request: Request,
+    connection: Annotated[asyncpg.Connection, Depends(get_tenant_connection)],
+) -> asyncpg.Connection:
+    """Require an owner/admin membership for agent configuration changes."""
+    if getattr(request.state, "tenant_role", None) not in {"owner", "admin"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tenant administrator role required",
+        )
+    return connection
