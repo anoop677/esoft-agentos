@@ -93,12 +93,13 @@ CREATE POLICY tenant_isolation ON public.agent_versions
     USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), ''));
 
-GRANT SELECT, INSERT, UPDATE, DELETE
-    ON public.tenants, public.tenant_memberships,
-       public.agent_definitions, public.agent_versions
-    TO agentos_app;
+-- The runtime role may read tenant metadata, but cannot provision tenants or
+-- grant itself membership. Agent versions are append-only.
+GRANT SELECT ON public.tenants, public.tenant_memberships TO agentos_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.agent_definitions TO agentos_app;
+GRANT SELECT, INSERT ON public.agent_versions TO agentos_app;
 
 COMMENT ON TABLE public.tenants IS 'Tenant directory. Provisioning is restricted to a trusted platform workflow.';
 COMMENT ON TABLE public.tenant_memberships IS 'Maps identity-provider subjects to tenant roles.';
 COMMENT ON TABLE public.agent_definitions IS 'Tenant-scoped logical agent records.';
-COMMENT ON TABLE public.agent_versions IS 'Immutable, tenant-scoped agent configuration versions.';
+COMMENT ON TABLE public.agent_versions IS 'Append-only, tenant-scoped agent configuration versions.';
