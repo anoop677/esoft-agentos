@@ -25,10 +25,9 @@ async def get_tenant_connection(
             detail="Database connection pool is unavailable",
         )
 
-    async with pool.acquire() as connection:
-        async with connection.transaction():
-            await connection.execute(
-                "SELECT set_config('app.tenant_id', $1, true)",
-                principal.tenant_id,
-            )
-            yield connection
+    async with pool.acquire() as connection, connection.transaction():
+        await connection.execute(
+            "SELECT set_config('app.tenant_id', $1, true)",
+            principal.tenant_id,
+        )
+        yield connection
