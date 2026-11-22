@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
 
@@ -9,7 +11,9 @@ test_app = FastAPI()
 
 
 @test_app.get("/private")
-async def private_endpoint(principal: Principal = Depends(get_current_principal)):
+async def private_endpoint(
+    principal: Annotated[Principal, Depends(get_current_principal)],
+):
     return {
         "subject": principal.subject,
         "tenant_id": principal.tenant_id,
