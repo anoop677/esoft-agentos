@@ -5,14 +5,18 @@ import pytest
 from fastapi import HTTPException
 
 from app.core.auth import Principal
-from app.infrastructure.tenant_db import get_tenant_connection
+from app.infrastructure.tenant_db import (
+    get_tenant_admin_connection,
+    get_tenant_connection,
+)
 
 
 class FakeConnection:
-    def __init__(self, tenant_active=True, membership_active=True):
+    def __init__(self, tenant_active=True, membership_active=True, role="admin"):
         self.executed = []
         self.tenant_active = tenant_active
         self.membership_active = membership_active
+        self.role = role
 
     @asynccontextmanager
     async def transaction(self):
@@ -25,9 +29,13 @@ class FakeConnection:
         self.executed.append((query, *args))
         if "FROM public.tenants" in query:
             return 1 if self.tenant_active else None
+        raise AssertionError("Unexpected fetchval query")
+
+    async def fetchrow(self, query, *args):
+        self.executed.append((query, *args))
         if "FROM public.tenant_memberships" in query:
-            return 1 if self.membership_active else None
-        raise AssertionError("Unexpected query")
+            return {"role": self.role} if self.membership_active else None
+        raise AssertionError("Unexpected fetchrow query")
 
 
 class FakePool:
@@ -45,7 +53,10 @@ class FakePool:
 
 def make_request(connection):
     pool = FakePool(connection)
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db_pool=pool)))
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(db_pool=pool)),
+        state=SimpleNamespace(),
+    )
     return request, pool
 
 
@@ -58,8 +69,8 @@ def make_principal():
 
 
 @pytest.mark.asyncio
-async def test_tenant_connection_checks_membership_and_sets_rls_context():
-    connection = FakeConnection()
+async def test_tenant_connection_checks_membership_sets_rls_and_resolves_role():
+    connection = FakeConnection(role="admin")
     request, pool = make_request(connection)
     dependency = get_tenant_connection(request, make_principal())
 
@@ -75,9 +86,25 @@ async def test_tenant_connection_checks_membership_and_sets_rls_context():
         "tenant-from-verified-token",
         "user-123",
     )
+    assert request.state.tenant_role == "admin"
 
     await dependency.aclose()
     assert pool.released is True
+
+
+@pytest.mark.asyncio
+async def test_tenant_admin_dependency_rejects_member_role():
+    connection = FakeConnection(role="member")
+    request, _ = make_request(connection)
+    dependency = get_tenant_connection(request, make_principal())
+    await anext(dependency)
+
+    with pytest.raises(HTTPException) as error:
+        await get_tenant_admin_connection(request, connection)
+
+    assert error.value.status_code == 403
+    assert error.value.detail == "Tenant administrator role required"
+    await dependency.aclose()
 
 
 @pytest.mark.asyncio
