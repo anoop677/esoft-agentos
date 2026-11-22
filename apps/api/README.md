@@ -19,9 +19,31 @@ docker compose up --build
 API: http://localhost:8000  
 OpenAPI docs: http://localhost:8000/docs  
 Liveness: http://localhost:8000/health/live  
-Readiness: http://localhost:8000/health/ready
+Readiness: http://localhost:8000/health/ready  
+Current principal: http://localhost:8000/api/v1/me
 
 The readiness endpoint checks PostgreSQL and Redis. The liveness endpoint only checks that the API process is responding.
+
+### Local identity mode
+
+For local development only, authentication is disabled by default. The identity endpoint requires an explicit tenant header:
+
+```bash
+curl -H "X-Dev-Tenant-ID: demo" http://localhost:8000/api/v1/me
+```
+
+This development header is rejected outside `development`, `local`, or `test` environments. Do not use it as a production authentication mechanism.
+
+### Keycloak configuration
+
+Set these environment variables when connecting a Keycloak realm:
+
+- `AUTH_ENABLED=true`
+- `KEYCLOAK_ISSUER=https://<keycloak-host>/realms/<realm>`
+- `KEYCLOAK_JWKS_URL=https://<keycloak-host>/realms/<realm>/protocol/openid-connect/certs`
+- `KEYCLOAK_AUDIENCE=agentos-api`
+
+The Keycloak access token must include a tenant claim named `tenant_id` by default. The claim name can be changed using `TENANT_CLAIM`. The API validates the token signature, issuer, audience, expiry, and subject using the realm's JWKS. Configure a dedicated API audience mapper in Keycloak rather than relying on an unverified client-side value.
 
 ## Run tests locally
 
@@ -34,7 +56,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The test suite currently covers the process liveness endpoint. Integration tests for database and Redis readiness will be added with the infrastructure test harness.
+Tests cover the liveness endpoint and tenant identity resolution in local and mocked-Keycloak modes. They do not require a live Keycloak server.
 
 ## Configuration
 
