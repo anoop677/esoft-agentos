@@ -7,10 +7,10 @@ from app.core import auth
 from app.core.auth import Principal, get_current_principal
 from app.core.config import Settings
 
-test_app = FastAPI()
+auth_test_application = FastAPI()
 
 
-@test_app.get("/private")
+@auth_test_application.get("/private")
 async def private_endpoint(
     principal: Annotated[Principal, Depends(get_current_principal)],
 ):
@@ -23,7 +23,7 @@ async def private_endpoint(
 
 async def request_private(headers: dict[str, str] | None = None):
     async with AsyncClient(
-        transport=ASGITransport(app=test_app),
+        transport=ASGITransport(app=auth_test_application),
         base_url="http://test",
     ) as client:
         return await client.get("/private", headers=headers or {})
