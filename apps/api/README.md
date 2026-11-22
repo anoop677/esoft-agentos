@@ -23,7 +23,7 @@ Liveness: http://localhost:8000/health/live
 Readiness: http://localhost:8000/health/ready  
 Current principal: http://localhost:8000/api/v1/me
 
-The readiness endpoint checks PostgreSQL and Redis. The liveness endpoint only checks that the API process is responding.
+The Compose startup runs a one-shot database bootstrap service before the API. It creates or updates the restricted `agentos_app` role without deleting an existing database volume.
 
 ## Identity and tenant context
 
@@ -61,9 +61,15 @@ The first migration creates:
 - Tenant directory and tenant membership tables.
 - Tenant-scoped agent definitions and immutable agent version records.
 - PostgreSQL row-level security (RLS) policies on all four tenant-owned tables.
-- Forced RLS, including for the table owner, so a normal application database role cannot bypass policies.
+- Forced RLS, including for the table owner.
 
-Every tenant-scoped query must use `get_tenant_connection` from `app/infrastructure/tenant_db.py`. It opens a transaction and sets `app.tenant_id` from the verified principal using transaction-local configuration. The value is cleared automatically when the transaction ends and the pooled connection is returned.
+Database identities are deliberately separated:
+
+- `agentos` is the local database administrator used only by the migration runner.
+- `agentos_app` is the API runtime role. It is `NOSUPERUSER`, `NOBYPASSRLS`, and does not own tenant tables.
+- The migration grants the runtime role only the required table operations.
+
+Every tenant-scoped query must use `get_tenant_connection` from `app/infrastructure/tenant_db.py`. It opens a transaction, sets `app.tenant_id` from the verified principal using transaction-local configuration, and confirms the tenant and caller membership are active. The setting is cleared when the transaction ends and the pooled connection is returned.
 
 Do not run the application as a PostgreSQL superuser or a role with `BYPASSRLS`. Tenant provisioning must be performed by a trusted platform provisioning process; do not let a client choose an arbitrary tenant ID and create its own tenant.
 
@@ -78,7 +84,7 @@ pip install -e ".[dev]"
 pytest -q
 ```
 
-The PostgreSQL RLS integration test runs when `TEST_DATABASE_URL` or `DATABASE_URL` is set and the schema migration has been applied. It verifies that tenant A cannot read, update, or insert records belonging to tenant B. The GitHub Actions workflow starts PostgreSQL, applies migrations, and runs this integration test on every feature-branch push and pull request.
+The PostgreSQL RLS integration test runs when `TEST_DATABASE_URL` or `DATABASE_URL` is set and the schema migration has been applied. It verifies that tenant A cannot read or update records belonging to tenant B and cannot insert rows for another tenant. GitHub Actions runs these tests using the restricted application role, not the database administrator.
 
 ## Configuration
 
