@@ -121,6 +121,16 @@ async def propose_tool_action(
 
         manifest = _decode_json(run["manifest"])
         permissions = _decode_json(run["tool_permissions"])
+        calls_used = await connection.fetchval(
+            """
+            SELECT count(*)
+            FROM public.agent_run_events
+            WHERE tenant_id = $1 AND run_id = $2
+              AND event_type IN ('approval_requested', 'tool_proposal_authorized')
+              AND details->>'tool_id' = $3
+            """,
+            principal.tenant_id, run_id, payload.tool_id,
+        )
         decision = evaluate_tool_proposal(
             agent_status=run["agent_status"],
             autonomy_level=manifest.get("autonomy_level", "A1"),
@@ -128,6 +138,7 @@ async def propose_tool_action(
             tool_id=payload.tool_id,
             action=payload.action,
             risk_tier=run["tool_risk_tier"] or "critical",
+            calls_used=calls_used,
             catalog_enabled=bool(run["tool_enabled"]),
             agents_enabled=run["agents_enabled"],
         )
