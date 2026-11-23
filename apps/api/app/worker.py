@@ -226,8 +226,6 @@ class AgentWorker:
             await self.complete(tenant_id, run_id, result)
         except Exception as exc:
             logger.exception("Agent run %s failed", run_id)
-            record = await self.load_run(tenant_id, run_id)
-            max_attempts = record["max_attempts"] if record else 1
             await self.fail(tenant_id, run_id, exc)
         return True
 
