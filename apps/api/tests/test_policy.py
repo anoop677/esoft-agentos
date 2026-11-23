@@ -20,6 +20,7 @@ def test_policy_denies_unsafe_or_unconfigured_tool_proposals(overrides, reason):
         "tool_id": "inventory.lookup",
         "action": "read",
         "risk_tier": "low",
+        "calls_used": 0,
         "catalog_enabled": True,
         "agents_enabled": True,
     }
@@ -37,6 +38,7 @@ def test_policy_requires_approval_for_configured_tool_action():
         tool_id="inventory.lookup",
         action="read",
         risk_tier="low",
+        calls_used=0,
         catalog_enabled=True,
         agents_enabled=True,
     )
@@ -69,6 +71,7 @@ def test_medium_and_high_risk_actions_always_require_approval():
             tool_id="inventory.lookup",
             action="read",
             risk_tier=risk_tier,
+            calls_used=0,
             catalog_enabled=True,
             agents_enabled=True,
         )
@@ -103,3 +106,25 @@ def test_argument_sanitizer_redacts_nested_credentials():
         "api_key": "[REDACTED]",
         "nested": {"refreshToken": "[REDACTED]", "quantity": 5},
     }
+
+
+
+def test_policy_enforces_max_calls_per_run():
+    decision = evaluate_tool_proposal(
+        agent_status="active",
+        autonomy_level="A1",
+        tool_permissions=[{
+            "tool_id": "inventory.lookup",
+            "actions": ["read"],
+            "approval_required": True,
+            "max_calls_per_run": 2,
+        }],
+        tool_id="inventory.lookup",
+        action="read",
+        risk_tier="low",
+        calls_used=2,
+        catalog_enabled=True,
+        agents_enabled=True,
+    )
+    assert decision.allowed is False
+    assert decision.reason == "Tool call limit for this run has been reached"
