@@ -34,6 +34,9 @@ class AgentRunSummary(BaseModel):
     error_code: str | None
     error_message: str | None
     attempt_count: int
+    input_tokens: int | None
+    output_tokens: int | None
+    model_name: str | None
     created_at: datetime
     updated_at: datetime
     started_at: datetime | None
@@ -89,7 +92,8 @@ async def enqueue_agent_run(
             (tenant_id, agent_id, agent_version_id, requested_by, input)
         VALUES ($1, $2, $3, $4, $5::jsonb)
         RETURNING id, agent_id, agent_version_id, status, input, output,
-                  error_code, error_message, attempt_count, created_at,
+                  error_code, error_message, attempt_count, input_tokens, output_tokens,
+                  model_name, created_at,
                   updated_at, started_at, finished_at
         """,
         principal.tenant_id,
@@ -97,6 +101,14 @@ async def enqueue_agent_run(
         agent["agent_version_id"],
         principal.subject,
         json.dumps(payload.input),
+    )
+    await connection.execute(
+        """
+        INSERT INTO public.agent_run_queue (tenant_id, run_id)
+        VALUES ($1, $2)
+        """,
+        principal.tenant_id,
+        row["id"],
     )
     return _run_from_row(row)
 
@@ -110,7 +122,8 @@ async def get_agent_run(
     row = await connection.fetchrow(
         """
         SELECT id, agent_id, agent_version_id, status, input, output,
-               error_code, error_message, attempt_count, created_at,
+               error_code, error_message, attempt_count, input_tokens, output_tokens,
+               model_name, created_at,
                updated_at, started_at, finished_at
         FROM public.agent_runs
         WHERE tenant_id = $1 AND id = $2
@@ -134,7 +147,8 @@ async def list_agent_runs(
     rows = await connection.fetch(
         """
         SELECT id, agent_id, agent_version_id, status, input, output,
-               error_code, error_message, attempt_count, created_at,
+               error_code, error_message, attempt_count, input_tokens, output_tokens,
+               model_name, created_at,
                updated_at, started_at, finished_at
         FROM public.agent_runs
         WHERE tenant_id = $1 AND agent_id = $2

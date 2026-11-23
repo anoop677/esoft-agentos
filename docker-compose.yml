@@ -16,7 +16,21 @@ services:
     ports:
       - "8000:8000"
     depends_on:
+      worker:
+    build:
+      context: ./apps/api
+    command: ["python", "-m", "app.worker"]
+    environment:
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+      DATABASE_URL: postgresql://agentos_app:${AGENTOS_APP_PASSWORD:-agentos_app_dev_only}@postgres:5432/agentos
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    depends_on:
       db-bootstrap:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  db-bootstrap:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
