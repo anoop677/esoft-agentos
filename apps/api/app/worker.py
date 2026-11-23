@@ -97,7 +97,7 @@ class AgentWorker:
                 await connection.execute(
                     "SELECT set_config('app.tenant_id', $1, true)", tenant_id
                 )
-                await connection.execute(
+                row = await connection.fetchrow(
                     """
                     UPDATE public.agent_runs
                     SET status = 'succeeded', output = $3::jsonb,
