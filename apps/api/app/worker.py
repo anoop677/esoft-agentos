@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import socket
@@ -102,7 +103,7 @@ class AgentWorker:
                     """,
                     tenant_id,
                     run_id,
-                    __import__("json").dumps(result),
+                    json.dumps(result),
                     usage.get("input_tokens"),
                     usage.get("output_tokens"),
                     result.get("model"),
@@ -181,13 +182,10 @@ class AgentWorker:
             manifest = record["manifest"]
             model_config = record["model_config"]
             if isinstance(manifest, str):
-                import json
                 manifest = json.loads(manifest)
             if isinstance(model_config, str):
-                import json
                 model_config = json.loads(model_config)
             if isinstance(record["input"], str):
-                import json
                 input_payload = json.loads(record["input"])
             else:
                 input_payload = record["input"]
