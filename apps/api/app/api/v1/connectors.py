@@ -28,6 +28,8 @@ class ERPNextConfiguration(BaseModel):
     def require_https(cls, value: AnyHttpUrl) -> AnyHttpUrl:
         if value.scheme != "https":
             raise ValueError("ERPNext site_url must use HTTPS")
+        if value.username or value.password or value.query or value.fragment:
+            raise ValueError("ERPNext site_url must not contain credentials, query parameters, or fragments")
         return value
 
 
