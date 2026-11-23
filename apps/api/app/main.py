@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.agents import router as agents_router
 from app.api.v1.identity import router as identity_router
+from app.api.v1.runs import router as runs_router
 from app.core.config import get_settings
 from app.health import router as health_router
 from app.infrastructure.connections import close_connections, open_connections
@@ -39,6 +40,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(identity_router)
 app.include_router(agents_router)
+app.include_router(runs_router)
 
 
 @app.get("/", tags=["system"])
