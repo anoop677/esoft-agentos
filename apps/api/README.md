@@ -56,11 +56,12 @@ SQL migrations live in `migrations/` and are tracked in `public.schema_migration
 docker compose exec api python scripts/apply_migrations.py
 ```
 
-The first migration creates:
+The migrations create:
 
 - Tenant directory and tenant membership tables.
 - Tenant-scoped agent definitions and immutable agent version records.
-- PostgreSQL row-level security (RLS) policies on all four tenant-owned tables.
+- Durable agent run records pinned to an immutable agent version.
+- PostgreSQL row-level security (RLS) policies on tenant-owned tables.
 - Forced RLS, including for the table owner.
 
 Database identities are deliberately separated:
@@ -72,6 +73,12 @@ Database identities are deliberately separated:
 Every tenant-scoped query must use `get_tenant_connection` from `app/infrastructure/tenant_db.py`. It opens a transaction, sets `app.tenant_id` from the verified principal using transaction-local configuration, and confirms the tenant and caller membership are active. The setting is cleared when the transaction ends and the pooled connection is returned.
 
 Do not run the application as a PostgreSQL superuser or a role with `BYPASSRLS`. Tenant provisioning must be performed by a trusted platform provisioning process; do not let a client choose an arbitrary tenant ID and create its own tenant.
+
+## Agent Registry and execution queue
+
+Agent definitions are managed through `/api/v1/agents`. Configuration writes require an active tenant membership with the database role `owner` or `admin`; reads are tenant-scoped. Each agent starts in `draft` and stores an immutable version 1 configuration.
+
+Execution requests are accepted only for agents in `active` status. `POST /api/v1/agents/{agent_id}/runs` validates a bounded JSON input payload and creates a durable `queued` run pinned to the latest immutable agent version. The response is HTTP 202. Use `GET /api/v1/runs/{run_id}` to inspect its state or `GET /api/v1/agents/{agent_id}/runs` to list runs. Run creation does not execute model calls or tools yet; the worker and model gateway are the next runtime milestone. No tool permission is bypassed and no external action is performed by these endpoints.
 
 ## Run tests locally
 
