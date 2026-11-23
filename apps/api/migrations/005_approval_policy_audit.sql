@@ -72,7 +72,11 @@ CREATE POLICY agent_run_events_tenant_policy ON public.agent_run_events
 CREATE OR REPLACE FUNCTION public.reject_agent_run_event_mutation()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    RAISE EXCEPTION 'agent_run_events is append-only';
+    -- Permit referential cleanup cascades; direct row mutation remains forbidden.
+    IF pg_trigger_depth() = 1 THEN
+        RAISE EXCEPTION 'agent_run_events is append-only';
+    END IF;
+    RETURN OLD;
 END;
 $$;
 
