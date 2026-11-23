@@ -112,18 +112,19 @@ async def create_connector(
     if errors:
         raise HTTPException(status_code=422, detail={"configuration_errors": errors})
     try:
-        row = await connection.fetchrow(
-            """
-            INSERT INTO public.agent_connectors
-                (tenant_id, connector_key, connector_type, display_name,
-                 configuration, created_by)
-            VALUES ($1, $2, $3, $4, $5::jsonb, $6)
-            RETURNING id, connector_key, connector_type, display_name, status,
-                      configuration, created_by, created_at, updated_at
-            """,
-            principal.tenant_id, payload.connector_key, payload.connector_type,
-            payload.display_name, json.dumps(configuration), principal.subject,
-        )
+        async with connection.transaction():
+            row = await connection.fetchrow(
+                """
+                INSERT INTO public.agent_connectors
+                    (tenant_id, connector_key, connector_type, display_name,
+                     configuration, created_by)
+                VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+                RETURNING id, connector_key, connector_type, display_name, status,
+                          configuration, created_by, created_at, updated_at
+                """,
+                principal.tenant_id, payload.connector_key, payload.connector_type,
+                payload.display_name, json.dumps(configuration), principal.subject,
+            )
     except asyncpg.UniqueViolationError as exc:
         raise HTTPException(status_code=409, detail="Connector key already exists") from exc
     return _connector(row)
