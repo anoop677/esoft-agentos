@@ -117,3 +117,34 @@ The PostgreSQL RLS integration test runs when `TEST_DATABASE_URL` or `DATABASE_U
 ## Configuration
 
 Configuration is supplied through environment variables. See `app/core/config.py` for the current settings. Do not commit real credentials or production secrets.
+
+## Connector registry (initial foundation)
+
+Migration `006_connector_registry.sql` adds tenant-scoped connector definitions with forced PostgreSQL RLS. The initial registry advertises an ERPNext read-only adapter contract with item, warehouse, stock-bin, and supplier read capabilities.
+
+Endpoints:
+- `GET /api/v1/connectors/catalog` — supported connector types and declared capabilities.
+- `POST /api/v1/connectors` — create a tenant connector (owner/admin only).
+- `GET /api/v1/connectors` and `GET /api/v1/connectors/{connector_id}` — list and inspect tenant connectors.
+- `PATCH /api/v1/connectors/{connector_id}/status` — update connector lifecycle (owner/admin only).
+- `POST /api/v1/connectors/{connector_id}/validate` — validate stored configuration.
+
+Important current limitation: this is a registry and adapter-contract milestone, not a live ERPNext integration. Validation does not contact the remote site; credentials are not accepted or stored; no external reads or writes occur. The next milestone must add a tenant-isolated secret vault/resolver and a constrained HTTP client with host allowlisting, timeouts, response limits, read-only resource allowlisting, and integration tests before live ERPNext access is enabled.
+
+## Local connector example
+
+Create a connector after migrations have been applied and a local tenant has been provisioned:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/connectors \
+  -H "X-Dev-Tenant-ID: demo" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "connector_key": "erpnext-demo",
+    "connector_type": "erpnext",
+    "display_name": "ERPNext Demo",
+    "configuration": {"site_url": "https://erp.example.com", "api_version": "v1"}
+  }'
+```
+
+This example registers configuration only. It does not authenticate or connect to ERPNext.
