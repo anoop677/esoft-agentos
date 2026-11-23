@@ -81,6 +81,7 @@ class AgentWorker:
                       SELECT 1 FROM public.agent_run_queue q
                       WHERE q.tenant_id = $1 AND q.run_id = $2 AND q.locked_by = $3
                   )
+                RETURNING id
                 """,
                 tenant_id,
                 run_id,
