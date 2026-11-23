@@ -84,7 +84,22 @@ Execution requests are accepted only for agents in `active` status. `POST /api/v
 
 Docker Compose starts a separate `worker` process alongside the API. It claims jobs with PostgreSQL `FOR UPDATE SKIP LOCKED`, uses a five-minute lease to recover abandoned work, pins execution to the agent version selected when the run was queued, and records output, model name, token usage, and bounded failure details. Failed model calls are retried up to the run's configured attempt limit. Set `OPENAI_API_KEY` in `.env` to enable model execution. The worker uses the restricted `agentos_app` database role; it does not use migration/admin credentials.
 
-The first runtime milestone intentionally has no tool-calling capability. It is a text-only model execution path. Never grant tools or production credentials to an agent until the approval/policy engine and audited tool adapters are in place.
+The worker remains a text-only model execution path. Tool permissions are not executable adapters. The worker re-checks the tenant kill switch and agent status immediately before starting a run; runs blocked by either control are cancelled and recorded in the run-event log.
+
+## Security, approvals and audit
+
+Migration `005_approval_policy_audit.sql` adds a platform tool catalog, tenant-scoped approval records, tenant-scoped append-only run events, and a tenant-level agent kill switch. The initial catalog contains only the placeholder `inventory.lookup` read action; no connector or tool adapter is wired to it.
+
+The policy engine checks the tenant kill switch, agent status, catalog enablement, immutable agent-version tool allowlist, action, and autonomy level. LLM output is treated only as a proposal, never as authorization. Configured actions requiring approval are added to the tenant approval inbox. Only tenant owners/admins can approve or reject. Approval records expire after 30 minutes and decisions are audited. Even an approved record does not execute a tool in this release.
+
+Endpoints:
+- `POST /api/v1/runs/{run_id}/tool-proposals`
+- `GET /api/v1/approvals`
+- `POST /api/v1/approvals/{approval_id}/decision`
+- `GET /api/v1/runs/{run_id}/events`
+- `GET/PATCH /api/v1/security/tenant-controls`
+
+Audit events are tenant-isolated and database-enforced append-only. Tool execution, connector credentials, external side effects, and autonomy beyond approval recording remain out of scope until the adapter runtime receives its own security review and integration tests.
 
 ## Run tests locally
 

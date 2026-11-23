@@ -56,10 +56,15 @@ class AgentWorker:
             return await connection.fetchrow(
                 """
                 SELECT r.id, r.status, r.input, r.attempt_count, r.max_attempts,
-                       v.manifest, v.model_config
+                       v.manifest, v.model_config, a.status AS agent_status,
+                       COALESCE(c.agents_enabled, TRUE) AS agents_enabled
                 FROM public.agent_runs r
                 JOIN public.agent_versions v
                   ON v.tenant_id = r.tenant_id AND v.id = r.agent_version_id
+                JOIN public.agent_definitions a
+                  ON a.tenant_id = r.tenant_id AND a.id = r.agent_id
+                LEFT JOIN public.tenant_agentos_controls c
+                  ON c.tenant_id = r.tenant_id
                 WHERE r.tenant_id = $1 AND r.id = $2
                 """,
                 tenant_id,
@@ -81,14 +86,62 @@ class AgentWorker:
                       SELECT 1 FROM public.agent_run_queue q
                       WHERE q.tenant_id = $1 AND q.run_id = $2 AND q.locked_by = $3
                   )
+                  AND EXISTS (
+                      SELECT 1
+                      FROM public.agent_definitions a
+                      LEFT JOIN public.tenant_agentos_controls c
+                        ON c.tenant_id = a.tenant_id
+                      WHERE a.tenant_id = $1
+                        AND a.id = public.agent_runs.agent_id
+                        AND a.status = 'active'
+                        AND COALESCE(c.agents_enabled, TRUE) = TRUE
+                  )
                 RETURNING id
                 """,
                 tenant_id,
                 run_id,
                 self.worker_id,
             )
-            if started_id is None:
-                raise RuntimeError("Agent run lease was lost before execution")
+            return started_id is not None
+
+    async def cancel_blocked(self, tenant_id: str, run_id, reason: str):
+        async with self.pool.acquire() as connection, connection.transaction():
+            await connection.execute(
+                "SELECT set_config('app.tenant_id', $1, true)", tenant_id
+            )
+            await connection.execute(
+                """
+                UPDATE public.agent_runs
+                SET status = 'cancelled', error_code = 'EXECUTION_DISABLED',
+                    error_message = $3, updated_at = now(), finished_at = now()
+                WHERE tenant_id = $1 AND id = $2
+                  AND EXISTS (
+                      SELECT 1 FROM public.agent_run_queue q
+                      WHERE q.tenant_id = $1 AND q.run_id = $2 AND q.locked_by = $4
+                  )
+                """,
+                tenant_id, run_id, reason[:500], self.worker_id,
+            )
+            await connection.execute(
+                """
+                INSERT INTO public.agent_run_events
+                    (tenant_id, run_id, event_type, actor, details)
+                SELECT $1, $2, 'run_cancelled_by_policy', 'agent-worker',
+                       jsonb_build_object('reason', $3)
+                WHERE EXISTS (
+                    SELECT 1 FROM public.agent_runs
+                    WHERE tenant_id = $1 AND id = $2 AND status = 'cancelled'
+                )
+                """,
+                tenant_id, run_id, reason[:500],
+            )
+            await connection.execute(
+                """
+                DELETE FROM public.agent_run_queue
+                WHERE tenant_id = $1 AND run_id = $2 AND locked_by = $3
+                """,
+                tenant_id, run_id, self.worker_id,
+            )
 
     async def complete(self, tenant_id: str, run_id, result: dict):
         usage = result.get("usage") or {}
@@ -200,7 +253,20 @@ class AgentWorker:
                     )
                 return True
 
-            await self.mark_started(tenant_id, run_id)
+            if not record["agents_enabled"] or record["agent_status"] != "active":
+                await self.cancel_blocked(
+                    tenant_id, run_id,
+                    "Tenant agent kill switch is active or the agent is disabled",
+                )
+                return True
+
+            if not await self.mark_started(tenant_id, run_id):
+                await self.cancel_blocked(
+                    tenant_id, run_id,
+                    "Execution was stopped by the tenant or agent security control",
+                )
+                return True
+
             manifest = record["manifest"]
             model_config = record["model_config"]
             if isinstance(manifest, str):
