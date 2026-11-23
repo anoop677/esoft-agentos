@@ -6,6 +6,8 @@ from uuid import uuid4
 import asyncpg
 import pytest
 
+from app.worker import AgentWorker
+
 
 APP_DATABASE_URL = os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL")
 ADMIN_DATABASE_URL = os.getenv("MIGRATION_DATABASE_URL")
@@ -222,6 +224,11 @@ async def test_agent_run_queue_is_tenant_isolated():
             assert {row["run_id"] for row in queue_rows} == {run_a, run_b}
             assert set(queue_rows[0].keys()) == {"tenant_id", "run_id"}
 
+            async with asyncpg.create_pool(APP_DATABASE_URL) as worker_pool:
+                worker = AgentWorker(worker_pool, gateway=None, worker_id="rls-worker-test")
+                claimed = [await worker.claim(), await worker.claim()]
+                assert {job["run_id"] for job in claimed if job} == {run_a, run_b}
+                assert all(job["attempt_count"] == 1 for job in claimed if job)
 
             await app_connection.execute(
                 "SELECT set_config('app.tenant_id', $1, true)",
