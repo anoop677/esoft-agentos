@@ -80,6 +80,12 @@ Agent definitions are managed through `/api/v1/agents`. Configuration writes req
 
 Execution requests are accepted only for agents in `active` status. `POST /api/v1/agents/{agent_id}/runs` validates a bounded JSON input payload and creates a durable `queued` run pinned to the latest immutable agent version. The response is HTTP 202. Use `GET /api/v1/runs/{run_id}` to inspect its state or `GET /api/v1/agents/{agent_id}/runs` to list runs. Run creation does not execute model calls or tools yet; the worker and model gateway are the next runtime milestone. No tool permission is bypassed and no external action is performed by these endpoints.
 
+## Background worker
+
+Docker Compose starts a separate `worker` process alongside the API. It claims jobs with PostgreSQL `FOR UPDATE SKIP LOCKED`, uses a five-minute lease to recover abandoned work, pins execution to the agent version selected when the run was queued, and records output, model name, token usage, and bounded failure details. Failed model calls are retried up to the run's configured attempt limit. Set `OPENAI_API_KEY` in `.env` to enable model execution. The worker uses the restricted `agentos_app` database role; it does not use migration/admin credentials.
+
+The first runtime milestone intentionally has no tool-calling capability. It is a text-only model execution path. Never grant tools or production credentials to an agent until the approval/policy engine and audited tool adapters are in place.
+
 ## Run tests locally
 
 From `apps/api`:
