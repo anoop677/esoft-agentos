@@ -5,6 +5,7 @@ from uuid import UUID
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.auth import Principal, get_current_principal
@@ -131,7 +132,12 @@ async def propose_tool_action(
             agents_enabled=run["agents_enabled"],
         )
         if not decision.allowed:
-            raise HTTPException(status_code=403, detail=decision.reason)
+            await _event(
+                connection, principal.tenant_id, run_id, "tool_proposal_denied",
+                principal.subject, {"tool_id": payload.tool_id, "action": payload.action,
+                                    "reason": decision.reason},
+            )
+            return JSONResponse(status_code=403, content={"detail": decision.reason})
 
         if not decision.approval_required:
             await _event(
@@ -180,9 +186,16 @@ async def list_approvals(
 ) -> list[ApprovalSummary]:
     await connection.execute(
         """
-        UPDATE public.agent_approvals
-        SET status = 'expired'
-        WHERE tenant_id = $1 AND status = 'pending' AND expires_at <= now()
+        WITH expired AS (
+            UPDATE public.agent_approvals
+            SET status = 'expired'
+            WHERE tenant_id = $1 AND status = 'pending' AND expires_at <= now()
+            RETURNING tenant_id, run_id, id
+        )
+        INSERT INTO public.agent_run_events (tenant_id, run_id, event_type, actor, details)
+        SELECT tenant_id, run_id, 'approval_expired', 'approval-expiry-sweeper',
+               jsonb_build_object('approval_id', id)
+        FROM expired
         """,
         principal.tenant_id,
     )
@@ -207,6 +220,8 @@ async def decide_approval(
     connection: Annotated[asyncpg.Connection, Depends(get_tenant_admin_connection)],
     principal: Annotated[Principal, Depends(get_current_principal)],
 ) -> ApprovalSummary:
+    expired = False
+    row = None
     async with connection.transaction():
         current = await connection.fetchrow(
             """
@@ -222,23 +237,40 @@ async def decide_approval(
         if current["status"] != "pending":
             raise HTTPException(status_code=409, detail=f"Approval is already {current['status']}")
         if current["expires_at"] <= datetime.now(current["expires_at"].tzinfo):
-            raise HTTPException(status_code=409, detail="Approval has expired")
-
-        row = await connection.fetchrow(
-            """
-            UPDATE public.agent_approvals
-            SET status = $3, decided_by = $4, decision_comment = $5, decided_at = now()
-            WHERE tenant_id = $1 AND id = $2 AND status = 'pending'
-            RETURNING id, run_id, tool_id, action, arguments, status, requested_by,
-                      decided_by, decision_comment, expires_at, decided_at, created_at
-            """,
-            principal.tenant_id, approval_id, payload.decision, principal.subject, payload.comment,
-        )
-        await _event(
-            connection, principal.tenant_id, current["run_id"],
-            "approval_" + payload.decision, principal.subject,
-            {"approval_id": str(approval_id), "comment": payload.comment},
-        )
+            await connection.execute(
+                """
+                UPDATE public.agent_approvals
+                SET status = 'expired'
+                WHERE tenant_id = $1 AND id = $2 AND status = 'pending'
+                """,
+                principal.tenant_id, approval_id,
+            )
+            await _event(
+                connection, principal.tenant_id, current["run_id"], "approval_expired",
+                principal.subject, {"approval_id": str(approval_id)},
+            )
+            expired = True
+        else:
+            row = await connection.fetchrow(
+                """
+                UPDATE public.agent_approvals
+                SET status = $3, decided_by = $4, decision_comment = $5, decided_at = now()
+                WHERE tenant_id = $1 AND id = $2 AND status = 'pending'
+                  AND expires_at > now()
+                RETURNING id, run_id, tool_id, action, arguments, status, requested_by,
+                          decided_by, decision_comment, expires_at, decided_at, created_at
+                """,
+                principal.tenant_id, approval_id, payload.decision, principal.subject, payload.comment,
+            )
+            if row is None:
+                raise HTTPException(status_code=409, detail="Approval has expired")
+            await _event(
+                connection, principal.tenant_id, current["run_id"],
+                "approval_" + payload.decision, principal.subject,
+                {"approval_id": str(approval_id), "comment": payload.comment},
+            )
+    if expired:
+        return JSONResponse(status_code=409, content={"detail": "Approval has expired"})
     return _approval(row)
 
 
