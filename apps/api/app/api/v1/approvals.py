@@ -130,11 +130,6 @@ async def propose_tool_action(
             agents_enabled=run["agents_enabled"],
         )
         if not decision.allowed:
-            await _event(
-                connection, principal.tenant_id, run_id, "tool_proposal_denied",
-                principal.subject, {"tool_id": payload.tool_id, "action": payload.action,
-                                    "reason": decision.reason},
-            )
             raise HTTPException(status_code=403, detail=decision.reason)
 
         if not decision.approval_required:
@@ -182,6 +177,14 @@ async def list_approvals(
     limit: int = Query(default=25, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> list[ApprovalSummary]:
+    await connection.execute(
+        """
+        UPDATE public.agent_approvals
+        SET status = 'expired'
+        WHERE tenant_id = $1 AND status = 'pending' AND expires_at <= now()
+        """,
+        principal.tenant_id,
+    )
     rows = await connection.fetch(
         """
         SELECT id, run_id, tool_id, action, arguments, status, requested_by,
@@ -218,17 +221,6 @@ async def decide_approval(
         if current["status"] != "pending":
             raise HTTPException(status_code=409, detail=f"Approval is already {current['status']}")
         if current["expires_at"] <= datetime.now(current["expires_at"].tzinfo):
-            await connection.execute(
-                """
-                UPDATE public.agent_approvals SET status = 'expired'
-                WHERE tenant_id = $1 AND id = $2 AND status = 'pending'
-                """,
-                principal.tenant_id, approval_id,
-            )
-            await _event(
-                connection, principal.tenant_id, current["run_id"], "approval_expired",
-                principal.subject, {"approval_id": str(approval_id)},
-            )
             raise HTTPException(status_code=409, detail="Approval has expired")
 
         row = await connection.fetchrow(
