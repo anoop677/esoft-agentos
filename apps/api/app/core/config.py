@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     keycloak_jwks_url: str | None = None
     keycloak_jwks_cache_seconds: int = 300
     tenant_claim: str = "tenant_id"
+    openai_api_key: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",
