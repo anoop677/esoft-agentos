@@ -80,9 +80,14 @@ class AgentWorker:
                     SET status = 'running', attempt_count = attempt_count + 1,
                         started_at = COALESCE(started_at, now()), updated_at = now()
                     WHERE tenant_id = $1 AND id = $2 AND status IN ('queued', 'running')
+                      AND EXISTS (
+                          SELECT 1 FROM public.agent_run_queue q
+                          WHERE q.tenant_id = $1 AND q.run_id = $2 AND q.locked_by = $3
+                      )
                     """,
                     tenant_id,
                     run_id,
+                    self.worker_id,
                 )
 
     async def complete(self, tenant_id: str, run_id, result: dict):
@@ -100,6 +105,11 @@ class AgentWorker:
                         updated_at = now(), finished_at = now(),
                         locked_by = NULL, locked_at = NULL
                     WHERE tenant_id = $1 AND id = $2
+                      AND EXISTS (
+                          SELECT 1 FROM public.agent_run_queue q
+                          WHERE q.tenant_id = $1 AND q.run_id = $2 AND q.locked_by = $7
+                      )
+                    RETURNING id
                     """,
                     tenant_id,
                     run_id,
@@ -107,7 +117,10 @@ class AgentWorker:
                     usage.get("input_tokens"),
                     usage.get("output_tokens"),
                     result.get("model"),
+                    self.worker_id,
                 )
+                if not row:
+                    raise RuntimeError("Agent run lease was lost before completion")
                 await connection.execute(
                     """
                     DELETE FROM public.agent_run_queue
@@ -137,13 +150,20 @@ class AgentWorker:
                                             THEN now() ELSE NULL END,
                         locked_by = NULL, locked_at = NULL
                     WHERE tenant_id = $1 AND id = $2
+                      AND EXISTS (
+                          SELECT 1 FROM public.agent_run_queue q
+                          WHERE q.tenant_id = $1 AND q.run_id = $2 AND q.locked_by = $4
+                      )
                     RETURNING status
                     """,
                     tenant_id,
                     run_id,
                     message,
+                    self.worker_id,
                 )
-                if row is None or row["status"] == "failed":
+                if row is None:
+                    return
+                if row["status"] == "failed":
                     await connection.execute(
                         "DELETE FROM public.agent_run_queue WHERE tenant_id = $1 AND run_id = $2",
                         tenant_id,
@@ -172,9 +192,13 @@ class AgentWorker:
             if record is None or record["status"] in {"succeeded", "failed", "cancelled"}:
                 async with self.pool.acquire() as connection:
                     await connection.execute(
-                        "DELETE FROM public.agent_run_queue WHERE tenant_id = $1 AND run_id = $2",
+                        """
+                        DELETE FROM public.agent_run_queue
+                        WHERE tenant_id = $1 AND run_id = $2 AND locked_by = $3
+                        """,
                         tenant_id,
                         run_id,
+                        self.worker_id,
                     )
                 return True
 
