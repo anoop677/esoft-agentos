@@ -92,7 +92,7 @@ async def enqueue_agent_run(
             (tenant_id, agent_id, agent_version_id, requested_by, input)
         VALUES ($1, $2, $3, $4, $5::jsonb)
         RETURNING id, agent_id, agent_version_id, status, input, output,
-                  error_code, error_message, attempt_count, input_tokens, output_tokens, model_name, created_at,
+                  error_code, error_message, attempt_count, input_tokens, output_tokens,\n                  model_name, created_at,
                   updated_at, started_at, finished_at
         """,
         principal.tenant_id,
@@ -121,7 +121,7 @@ async def get_agent_run(
     row = await connection.fetchrow(
         """
         SELECT id, agent_id, agent_version_id, status, input, output,
-               error_code, error_message, attempt_count, created_at,
+               error_code, error_message, attempt_count, input_tokens, output_tokens,\n               model_name, created_at,
                updated_at, started_at, finished_at
         FROM public.agent_runs
         WHERE tenant_id = $1 AND id = $2
