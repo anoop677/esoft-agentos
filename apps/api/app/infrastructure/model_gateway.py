@@ -11,9 +11,16 @@ class ModelGatewayError(Exception):
 class ModelGateway:
     """Small provider adapter. Tool calling is intentionally not enabled."""
 
-    def __init__(self, *, openai_api_key: str | None, timeout_seconds: float = 45.0):
+    def __init__(
+        self,
+        *,
+        openai_api_key: str | None,
+        timeout_seconds: float = 45.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ):
         self.openai_api_key = openai_api_key
         self.timeout_seconds = timeout_seconds
+        self.transport = transport
 
     async def generate(
         self,
@@ -43,7 +50,9 @@ class ModelGateway:
             "temperature": temperature,
         }
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with httpx.AsyncClient(
+                timeout=self.timeout_seconds, transport=self.transport
+            ) as client:
                 response = await client.post(
                     "https://api.openai.com/v1/responses",
                     headers={"Authorization": f"Bearer {self.openai_api_key}"},
