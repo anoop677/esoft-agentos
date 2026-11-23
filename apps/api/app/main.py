@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.agents import router as agents_router
 from app.api.v1.approvals import router as approvals_router
+from app.api.v1.connectors import router as connectors_router
 from app.api.v1.identity import router as identity_router
 from app.api.v1.runs import router as runs_router
 from app.core.config import get_settings
@@ -43,6 +44,7 @@ app.include_router(identity_router)
 app.include_router(agents_router)
 app.include_router(runs_router)
 app.include_router(approvals_router)
+app.include_router(connectors_router)
 
 
 @app.get("/", tags=["system"])
