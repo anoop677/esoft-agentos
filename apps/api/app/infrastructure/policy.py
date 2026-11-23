@@ -16,6 +16,7 @@ def evaluate_tool_proposal(
     tool_id: str,
     action: str,
     risk_tier: str,
+    calls_used: int,
     catalog_enabled: bool,
     agents_enabled: bool,
 ) -> PolicyDecision:
@@ -38,6 +39,8 @@ def evaluate_tool_proposal(
     )
     if permission is None:
         return PolicyDecision(False, False, "Tool action is not in the agent version allowlist")
+    if calls_used >= int(permission.get("max_calls_per_run", 10)):
+        return PolicyDecision(False, False, "Tool call limit for this run has been reached")
 
     if autonomy_level in {"A0", "A1"} and action.lower() not in {
         "read", "list", "get", "search"
