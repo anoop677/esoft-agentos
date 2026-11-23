@@ -22,164 +22,159 @@ class AgentWorker:
         self.worker_id = worker_id
 
     async def claim(self):
-        async with self.pool.acquire() as connection:
-            async with connection.transaction():
-                return await connection.fetchrow(
-                    """
-                    WITH candidate AS (
-                        SELECT id
-                        FROM public.agent_run_queue
-                        WHERE status = 'queued'
-                           OR (status = 'running'
-                               AND locked_at < now() - ($1::int * interval '1 second'))
-                        ORDER BY created_at, id
-                        FOR UPDATE SKIP LOCKED
-                        LIMIT 1
-                    )
-                    UPDATE public.agent_run_queue q
-                    SET status = 'running',
-                        locked_by = $2,
-                        locked_at = now(),
-                        attempt_count = q.attempt_count + 1
-                    FROM candidate
-                    WHERE q.id = candidate.id
-                    RETURNING q.tenant_id, q.run_id, q.attempt_count
-                    """,
-                    LEASE_SECONDS,
-                    self.worker_id,
+        async with self.pool.acquire() as connection, connection.transaction():
+            return await connection.fetchrow(
+                """
+                WITH candidate AS (
+                    SELECT id
+                    FROM public.agent_run_queue
+                    WHERE status = 'queued'
+                       OR (status = 'running'
+                           AND locked_at < now() - ($1::int * interval '1 second'))
+                    ORDER BY created_at, id
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
                 )
+                UPDATE public.agent_run_queue q
+                SET status = 'running',
+                    locked_by = $2,
+                    locked_at = now(),
+                    attempt_count = q.attempt_count + 1
+                FROM candidate
+                WHERE q.id = candidate.id
+                RETURNING q.tenant_id, q.run_id, q.attempt_count
+                """,
+                LEASE_SECONDS,
+                self.worker_id,
+            )
 
     async def load_run(self, tenant_id: str, run_id):
-        async with self.pool.acquire() as connection:
-            async with connection.transaction():
-                await connection.execute(
-                    "SELECT set_config('app.tenant_id', $1, true)", tenant_id
-                )
-                return await connection.fetchrow(
-                    """
-                    SELECT r.id, r.status, r.input, r.attempt_count, r.max_attempts,
-                           v.manifest, v.model_config
-                    FROM public.agent_runs r
-                    JOIN public.agent_versions v
-                      ON v.tenant_id = r.tenant_id AND v.id = r.agent_version_id
-                    WHERE r.tenant_id = $1 AND r.id = $2
-                    """,
-                    tenant_id,
-                    run_id,
-                )
+        async with self.pool.acquire() as connection, connection.transaction():
+            await connection.execute(
+                "SELECT set_config('app.tenant_id', $1, true)", tenant_id
+            )
+            return await connection.fetchrow(
+                """
+                SELECT r.id, r.status, r.input, r.attempt_count, r.max_attempts,
+                       v.manifest, v.model_config
+                FROM public.agent_runs r
+                JOIN public.agent_versions v
+                  ON v.tenant_id = r.tenant_id AND v.id = r.agent_version_id
+                WHERE r.tenant_id = $1 AND r.id = $2
+                """,
+                tenant_id,
+                run_id,
+            )
 
     async def mark_started(self, tenant_id: str, run_id):
-        async with self.pool.acquire() as connection:
-            async with connection.transaction():
-                await connection.execute(
-                    "SELECT set_config('app.tenant_id', $1, true)", tenant_id
-                )
-                await connection.execute(
-                    """
-                    UPDATE public.agent_runs
-                    SET status = 'running', attempt_count = attempt_count + 1,
-                        started_at = COALESCE(started_at, now()), updated_at = now()
-                    WHERE tenant_id = $1 AND id = $2 AND status IN ('queued', 'running')
-                      AND EXISTS (
-                          SELECT 1 FROM public.agent_run_queue q
-                          WHERE q.tenant_id = $1 AND q.run_id = $2 AND q.locked_by = $3
-                      )
-                    """,
-                    tenant_id,
-                    run_id,
-                    self.worker_id,
-                )
+        async with self.pool.acquire() as connection, connection.transaction():
+            await connection.execute(
+                "SELECT set_config('app.tenant_id', $1, true)", tenant_id
+            )
+            await connection.execute(
+                """
+                UPDATE public.agent_runs
+                SET status = 'running', attempt_count = attempt_count + 1,
+                    started_at = COALESCE(started_at, now()), updated_at = now()
+                WHERE tenant_id = $1 AND id = $2 AND status IN ('queued', 'running')
+                  AND EXISTS (
+                      SELECT 1 FROM public.agent_run_queue q
+                      WHERE q.tenant_id = $1 AND q.run_id = $2 AND q.locked_by = $3
+                  )
+                """,
+                tenant_id,
+                run_id,
+                self.worker_id,
+            )
 
     async def complete(self, tenant_id: str, run_id, result: dict):
         usage = result.get("usage") or {}
-        async with self.pool.acquire() as connection:
-            async with connection.transaction():
+        async with self.pool.acquire() as connection, connection.transaction():
+            await connection.execute(
+                "SELECT set_config('app.tenant_id', $1, true)", tenant_id
+            )
+            row = await connection.fetchrow(
+                """
+                UPDATE public.agent_runs
+                SET status = 'succeeded', output = $3::jsonb,
+                    input_tokens = $4, output_tokens = $5, model_name = $6,
+                    updated_at = now(), finished_at = now(),
+                    locked_by = NULL, locked_at = NULL
+                WHERE tenant_id = $1 AND id = $2
+                  AND EXISTS (
+                      SELECT 1 FROM public.agent_run_queue q
+                      WHERE q.tenant_id = $1 AND q.run_id = $2 AND q.locked_by = $7
+                  )
+                RETURNING id
+                """,
+                tenant_id,
+                run_id,
+                json.dumps(result),
+                usage.get("input_tokens"),
+                usage.get("output_tokens"),
+                result.get("model"),
+                self.worker_id,
+            )
+            if not row:
+                raise RuntimeError("Agent run lease was lost before completion")
+            await connection.execute(
+                """
+                DELETE FROM public.agent_run_queue
+                WHERE tenant_id = $1 AND run_id = $2 AND locked_by = $3
+                """,
+                tenant_id,
+                run_id,
+                self.worker_id,
+            )
+
+    async def fail(self, tenant_id: str, run_id, error: Exception, max_attempts: int):
+        message = str(error)[:500]
+        async with self.pool.acquire() as connection, connection.transaction():
+            await connection.execute(
+                "SELECT set_config('app.tenant_id', $1, true)", tenant_id
+            )
+            row = await connection.fetchrow(
+                """
+                UPDATE public.agent_runs
+                SET status = CASE WHEN attempt_count >= max_attempts
+                                  THEN 'failed' ELSE 'queued' END,
+                    error_code = 'MODEL_EXECUTION_FAILED',
+                    error_message = $3,
+                    updated_at = now(),
+                    finished_at = CASE WHEN attempt_count >= max_attempts
+                                        THEN now() ELSE NULL END,
+                    locked_by = NULL, locked_at = NULL
+                WHERE tenant_id = $1 AND id = $2
+                  AND EXISTS (
+                      SELECT 1 FROM public.agent_run_queue q
+                      WHERE q.tenant_id = $1 AND q.run_id = $2 AND q.locked_by = $4
+                  )
+                RETURNING status
+                """,
+                tenant_id,
+                run_id,
+                message,
+                self.worker_id,
+            )
+            if row is None:
+                return
+            if row["status"] == "failed":
                 await connection.execute(
-                    "SELECT set_config('app.tenant_id', $1, true)", tenant_id
-                )
-                row = await connection.fetchrow(
-                    """
-                    UPDATE public.agent_runs
-                    SET status = 'succeeded', output = $3::jsonb,
-                        input_tokens = $4, output_tokens = $5, model_name = $6,
-                        updated_at = now(), finished_at = now(),
-                        locked_by = NULL, locked_at = NULL
-                    WHERE tenant_id = $1 AND id = $2
-                      AND EXISTS (
-                          SELECT 1 FROM public.agent_run_queue q
-                          WHERE q.tenant_id = $1 AND q.run_id = $2 AND q.locked_by = $7
-                      )
-                    RETURNING id
-                    """,
+                    "DELETE FROM public.agent_run_queue WHERE tenant_id = $1 AND run_id = $2",
                     tenant_id,
                     run_id,
-                    json.dumps(result),
-                    usage.get("input_tokens"),
-                    usage.get("output_tokens"),
-                    result.get("model"),
-                    self.worker_id,
                 )
-                if not row:
-                    raise RuntimeError("Agent run lease was lost before completion")
+            else:
                 await connection.execute(
                     """
-                    DELETE FROM public.agent_run_queue
+                    UPDATE public.agent_run_queue
+                    SET status = 'queued', locked_by = NULL, locked_at = NULL
                     WHERE tenant_id = $1 AND run_id = $2 AND locked_by = $3
                     """,
                     tenant_id,
                     run_id,
                     self.worker_id,
                 )
-
-    async def fail(self, tenant_id: str, run_id, error: Exception, max_attempts: int):
-        message = str(error)[:500]
-        async with self.pool.acquire() as connection:
-            async with connection.transaction():
-                await connection.execute(
-                    "SELECT set_config('app.tenant_id', $1, true)", tenant_id
-                )
-                row = await connection.fetchrow(
-                    """
-                    UPDATE public.agent_runs
-                    SET status = CASE WHEN attempt_count >= max_attempts
-                                      THEN 'failed' ELSE 'queued' END,
-                        error_code = 'MODEL_EXECUTION_FAILED',
-                        error_message = $3,
-                        updated_at = now(),
-                        finished_at = CASE WHEN attempt_count >= max_attempts
-                                            THEN now() ELSE NULL END,
-                        locked_by = NULL, locked_at = NULL
-                    WHERE tenant_id = $1 AND id = $2
-                      AND EXISTS (
-                          SELECT 1 FROM public.agent_run_queue q
-                          WHERE q.tenant_id = $1 AND q.run_id = $2 AND q.locked_by = $4
-                      )
-                    RETURNING status
-                    """,
-                    tenant_id,
-                    run_id,
-                    message,
-                    self.worker_id,
-                )
-                if row is None:
-                    return
-                if row["status"] == "failed":
-                    await connection.execute(
-                        "DELETE FROM public.agent_run_queue WHERE tenant_id = $1 AND run_id = $2",
-                        tenant_id,
-                        run_id,
-                    )
-                else:
-                    await connection.execute(
-                        """
-                        UPDATE public.agent_run_queue
-                        SET status = 'queued', locked_by = NULL, locked_at = NULL
-                        WHERE tenant_id = $1 AND run_id = $2 AND locked_by = $3
-                        """,
-                        tenant_id,
-                        run_id,
-                        self.worker_id,
-                    )
 
     async def process_one(self) -> bool:
         job = await self.claim()
@@ -226,7 +221,7 @@ class AgentWorker:
                 temperature=model_config.get("temperature", 0.2),
             )
             await self.complete(tenant_id, run_id, result)
-        except Exception as exc:  # noqa: BLE001 - isolate one failed job from worker loop
+        except Exception as exc:
             logger.exception("Agent run %s failed", run_id)
             record = await self.load_run(tenant_id, run_id)
             max_attempts = record["max_attempts"] if record else 1
