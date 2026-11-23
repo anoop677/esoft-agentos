@@ -201,8 +201,28 @@ async def test_agent_run_queue_is_tenant_isolated():
                 agent_ids[1],
                 version_ids[1],
             )
+            await admin.execute(
+                """
+                INSERT INTO public.agent_run_queue (tenant_id, run_id)
+                VALUES ($1, $2), ($3, $4)
+                """,
+                tenant_a,
+                run_a,
+                tenant_b,
+                run_b,
+            )
 
         async with app_connection.transaction():
+            # The worker can see routing metadata across tenants, but this
+            # table intentionally contains no prompts, inputs, or outputs.
+            queue_rows = await app_connection.fetch(
+                "SELECT tenant_id, run_id FROM public.agent_run_queue ORDER BY tenant_id"
+            )
+            assert len(queue_rows) == 2
+            assert {row["run_id"] for row in queue_rows} == {run_a, run_b}
+            assert set(queue_rows[0].keys()) == {"tenant_id", "run_id"}
+
+
             await app_connection.execute(
                 "SELECT set_config('app.tenant_id', $1, true)",
                 tenant_a,
