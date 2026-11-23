@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.auth import Principal, get_current_principal
-from app.infrastructure.policy import evaluate_tool_proposal
+from app.infrastructure.policy import evaluate_tool_proposal, sanitize_arguments
 from app.infrastructure.tenant_db import get_tenant_admin_connection, get_tenant_connection
 
 router = APIRouter(prefix="/api/v1", tags=["security-approvals"])
@@ -98,7 +98,7 @@ async def propose_tool_action(
             SELECT r.id, r.agent_id, r.status, a.status AS agent_status,
                    v.manifest, v.tool_permissions,
                    COALESCE(c.agents_enabled, TRUE) AS agents_enabled,
-                   t.enabled AS tool_enabled
+                   t.enabled AS tool_enabled, t.risk_tier AS tool_risk_tier
             FROM public.agent_runs r
             JOIN public.agent_definitions a
               ON a.tenant_id = r.tenant_id AND a.id = r.agent_id
@@ -126,6 +126,7 @@ async def propose_tool_action(
             tool_permissions=permissions,
             tool_id=payload.tool_id,
             action=payload.action,
+            risk_tier=run["tool_risk_tier"] or "critical",
             catalog_enabled=bool(run["tool_enabled"]),
             agents_enabled=run["agents_enabled"],
         )
@@ -156,7 +157,7 @@ async def propose_tool_action(
             run_id,
             payload.tool_id,
             payload.action,
-            json.dumps(payload.arguments),
+            json.dumps(sanitize_arguments(payload.arguments)),
             principal.subject,
         )
         await _event(
