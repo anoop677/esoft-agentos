@@ -54,6 +54,7 @@ def test_autonomous_levels_still_require_approval_in_initial_runtime():
         tool_id="inventory.lookup",
         action="read",
         risk_tier="low",
+        calls_used=0,
         catalog_enabled=True,
         agents_enabled=True,
     )
@@ -87,6 +88,7 @@ def test_recommendation_level_cannot_propose_write_actions():
         tool_id="inventory.lookup",
         action="write",
         risk_tier="low",
+        calls_used=0,
         catalog_enabled=True,
         agents_enabled=True,
     )
