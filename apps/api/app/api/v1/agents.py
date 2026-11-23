@@ -15,7 +15,7 @@ from app.infrastructure.tenant_db import (
 
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
-Slug = Annotated[str, Field(min_length=2, max_length=63, pattern=r"^[a-z0-9][a-z0-9-]+$")]
+Slug = Annotated[str, Field(min_length=2, max_length=63, pattern=r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")]
 
 
 class AgentManifest(BaseModel):
@@ -102,13 +102,18 @@ def _version_payload(configuration: AgentConfiguration) -> tuple[str, str, str]:
     )
 
 
+def _decode_json(value):
+    """Normalize asyncpg JSON/JSONB values for Pydantic response models."""
+    return json.loads(value) if isinstance(value, str) else value
+
+
 def _version_from_row(row: asyncpg.Record | dict) -> AgentVersionSummary:
     return AgentVersionSummary(
         id=row["id"],
         version=row["version"],
-        manifest=row["manifest"],
-        model_settings=row["model_config"],
-        tool_permissions=row["tool_permissions"],
+        manifest=_decode_json(row["manifest"]),
+        model_settings=_decode_json(row["model_config"]),
+        tool_permissions=_decode_json(row["tool_permissions"]),
         created_by=row["created_by"],
         created_at=row["created_at"],
     )
@@ -148,9 +153,9 @@ async def _get_agent_detail(
         latest = AgentVersionSummary(
             id=row["version_id"],
             version=row["version"],
-            manifest=row["manifest"],
-            model_settings=row["model_config"],
-            tool_permissions=row["tool_permissions"],
+            manifest=_decode_json(row["manifest"]),
+            model_settings=_decode_json(row["model_config"]),
+            tool_permissions=_decode_json(row["tool_permissions"]),
             created_by=row["version_created_by"],
             created_at=row["version_created_at"],
         )
