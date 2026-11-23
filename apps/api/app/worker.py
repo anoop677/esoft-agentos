@@ -71,7 +71,7 @@ class AgentWorker:
             await connection.execute(
                 "SELECT set_config('app.tenant_id', $1, true)", tenant_id
             )
-            await connection.execute(
+            started_id = await connection.fetchval(
                 """
                 UPDATE public.agent_runs
                 SET status = 'running', attempt_count = attempt_count + 1,
@@ -86,6 +86,8 @@ class AgentWorker:
                 run_id,
                 self.worker_id,
             )
+            if started_id is None:
+                raise RuntimeError("Agent run lease was lost before execution")
 
     async def complete(self, tenant_id: str, run_id, result: dict):
         usage = result.get("usage") or {}
@@ -127,7 +129,7 @@ class AgentWorker:
                 self.worker_id,
             )
 
-    async def fail(self, tenant_id: str, run_id, error: Exception, max_attempts: int):
+    async def fail(self, tenant_id: str, run_id, error: Exception):
         message = str(error)[:500]
         async with self.pool.acquire() as connection, connection.transaction():
             await connection.execute(
@@ -225,7 +227,7 @@ class AgentWorker:
             logger.exception("Agent run %s failed", run_id)
             record = await self.load_run(tenant_id, run_id)
             max_attempts = record["max_attempts"] if record else 1
-            await self.fail(tenant_id, run_id, exc, max_attempts)
+            await self.fail(tenant_id, run_id, exc)
         return True
 
     async def run_forever(self):
