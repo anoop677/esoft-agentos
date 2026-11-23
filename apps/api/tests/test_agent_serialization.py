@@ -1,7 +1,7 @@
 import json
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
+from pydantic import ValidationError
 
 from app.api.v1.agents import AgentCreate, _decode_json
 
@@ -13,9 +13,21 @@ def test_decode_json_handles_asyncpg_jsonb_strings_and_native_values():
 
 
 def test_agent_slug_rejects_trailing_hyphen():
-    slug_type = AgentCreate.model_fields["slug"].annotation
-    adapter = TypeAdapter(slug_type)
-
-    assert adapter.validate_python("inventory-agent") == "inventory-agent"
+    payload = {
+        "slug": "inventory-agent-",
+        "name": "Inventory Agent",
+        "manifest": {"purpose": "Read inventory"},
+        "model_settings": {"provider": "openai", "model": "gpt"},
+    }
     with pytest.raises(ValidationError):
-        adapter.validate_python("inventory-agent-")
+        AgentCreate.model_validate(payload)
+
+
+def test_agent_slug_accepts_valid_slug():
+    payload = {
+        "slug": "inventory-agent",
+        "name": "Inventory Agent",
+        "manifest": {"purpose": "Read inventory"},
+        "model_settings": {"provider": "openai", "model": "gpt"},
+    }
+    assert AgentCreate.model_validate(payload).slug == "inventory-agent"
