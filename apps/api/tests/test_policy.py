@@ -51,6 +51,7 @@ def test_autonomous_levels_still_require_approval_in_initial_runtime():
         tool_permissions=[{"tool_id": "inventory.lookup", "actions": ["read"], "approval_required": False}],
         tool_id="inventory.lookup",
         action="read",
+        risk_tier="low",
         catalog_enabled=True,
         agents_enabled=True,
     )
