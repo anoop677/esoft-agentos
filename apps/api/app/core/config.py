@@ -14,6 +14,13 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     cors_origins: str = "http://localhost:3000"
 
+    auth_enabled: bool = False
+    keycloak_issuer: str | None = None
+    keycloak_audience: str = "agentos-api"
+    keycloak_jwks_url: str | None = None
+    keycloak_jwks_cache_seconds: int = 300
+    tenant_claim: str = "tenant_id"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

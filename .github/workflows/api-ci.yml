@@ -17,6 +17,29 @@ permissions:
 jobs:
   api-quality:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: agentos
+          POSTGRES_USER: agentos
+          POSTGRES_PASSWORD: agentos_ci_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agentos -d agentos"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://agentos_app:agentos_ci_app_password@localhost:5432/agentos
+      MIGRATION_DATABASE_URL: postgresql://agentos:agentos_ci_password@localhost:5432/agentos
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGDATABASE: agentos
+      PGUSER: agentos
+      PGPASSWORD: agentos_ci_password
+      AGENTOS_APP_PASSWORD: agentos_ci_app_password
     defaults:
       run:
         working-directory: apps/api
@@ -34,8 +57,14 @@ jobs:
       - name: Install API and development dependencies
         run: python -m pip install -e ".[dev]"
 
-      - name: Lint
-        run: ruff check app tests
+      - name: Create restricted application database role
+        run: sh docker/postgres/001-create-app-role.sh
 
-      - name: Run unit tests
+      - name: Apply database migrations as administrator
+        run: python scripts/apply_migrations.py
+
+      - name: Lint
+        run: ruff check app tests scripts
+
+      - name: Run unit and PostgreSQL integration tests as application role
         run: pytest -q
