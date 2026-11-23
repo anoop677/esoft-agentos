@@ -98,6 +98,14 @@ async def enqueue_agent_run(
         principal.subject,
         json.dumps(payload.input),
     )
+    await connection.execute(
+        """
+        INSERT INTO public.agent_run_queue (tenant_id, run_id)
+        VALUES ($1, $2)
+        """,
+        principal.tenant_id,
+        row["id"],
+    )
     return _run_from_row(row)
 
 
