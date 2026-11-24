@@ -411,7 +411,8 @@ class AgentWorker:
             else:
                 input_payload = record["input"]
 
-            # Configured tool permissions are not executed in this milestone.
+            # Model calls are proposals only. The worker persists approval requests;
+            # the separately authorized execution API performs the external request.
             if model_config.get("provider") != "openai":
                 raise ModelGatewayError("Only the OpenAI provider is enabled in this worker")
             result = await self.gateway.generate(
