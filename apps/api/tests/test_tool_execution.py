@@ -1,6 +1,7 @@
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from app.api.v1.tool_executions import ToolExecutionRequest
 from app.core.config import Settings
@@ -50,7 +51,7 @@ def test_rejects_unknown_tools_write_actions_and_unbounded_arguments(
 
 
 def test_request_model_rejects_extra_fields_and_oversized_arguments():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         ToolExecutionRequest(
             tool_id="erpnext.items.list",
             action="list",
