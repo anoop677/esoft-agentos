@@ -9,7 +9,7 @@ from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, SecretStr, field_
 
 from app.core.auth import Principal, get_current_principal
 from app.core.config import get_settings
-from app.infrastructure.credential_vault import encrypt_credentials
+from app.infrastructure.credential_vault import CredentialEncryptionError, encrypt_credentials
 
 from app.infrastructure.connectors import (
     get_connector_adapter,
@@ -240,16 +240,22 @@ async def put_connector_credentials(
     if not exists:
         raise HTTPException(status_code=404, detail="Connector not found")
 
-    encrypted = encrypt_credentials(
-        {
-            "api_key": payload.api_key.get_secret_value(),
-            "api_secret": payload.api_secret.get_secret_value(),
-        },
-        encryption_key=settings.connector_encryption_key,
-        key_version=settings.connector_encryption_key_version,
-        tenant_id=principal.tenant_id,
-        connector_id=str(connector_id),
-    )
+    try:
+        encrypted = encrypt_credentials(
+            {
+                "api_key": payload.api_key.get_secret_value(),
+                "api_secret": payload.api_secret.get_secret_value(),
+            },
+            encryption_key=settings.connector_encryption_key,
+            key_version=settings.connector_encryption_key_version,
+            tenant_id=principal.tenant_id,
+            connector_id=str(connector_id),
+        )
+    except CredentialEncryptionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Connector credential encryption is not configured correctly",
+        ) from exc
     await connection.execute(
         """
         INSERT INTO public.agent_connector_secrets
