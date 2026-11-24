@@ -4,7 +4,7 @@ import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.auth import Principal, get_current_principal
 from app.core.config import get_settings
@@ -31,6 +31,14 @@ class ToolExecutionRequest(BaseModel):
         if len(json.dumps(value, ensure_ascii=False).encode("utf-8")) > 16384:
             raise ValueError("Tool arguments must not exceed 16 KiB")
         return value
+
+    @model_validator(mode="after")
+    def validate_registered_action(self):
+        try:
+            validate_tool_arguments(self.tool_id, self.action, self.arguments)
+        except ToolExecutionError as exc:
+            raise ValueError(str(exc)) from exc
+        return self
 
 
 def _json(value):
@@ -259,7 +267,11 @@ async def _reserve_and_call(
                     tool_id=tool_id, action=action, arguments=arguments,
                 )
         async with client:
-            data = await getattr(client, method_name)(limit=limit, start=start)
+            try:
+                data = await getattr(client, method_name)(limit=limit, start=start)
+            except (ValueError, Exception) as exc:
+                # Connector/client exceptions are converted to a safe execution error.
+                raise ToolExecutionError("ERPNext read request failed") from exc
         output = {"data": data}
     except ToolExecutionError as exc:
         async with pool.acquire() as connection:
