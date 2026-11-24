@@ -89,15 +89,19 @@ async def test_approval_rls_and_audit_log_immutability():
 
         async with app.transaction():
             await app.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_a)
+            # Each expected database error must run in a savepoint: PostgreSQL
+            # marks the current transaction as failed after a statement error.
             with pytest.raises(asyncpg.InsufficientPrivilegeError):
-                await app.execute(
-                    "UPDATE public.agent_run_events SET event_type = 'tampered' WHERE run_id = $1",
-                    run_id,
-                )
+                async with app.transaction():
+                    await app.execute(
+                        "UPDATE public.agent_run_events SET event_type = 'tampered' WHERE run_id = $1",
+                        run_id,
+                    )
             with pytest.raises(asyncpg.InsufficientPrivilegeError):
-                await app.execute(
-                    "DELETE FROM public.agent_run_events WHERE run_id = $1", run_id
-                )
+                async with app.transaction():
+                    await app.execute(
+                        "DELETE FROM public.agent_run_events WHERE run_id = $1", run_id
+                    )
     finally:
         await admin.execute(
             "DELETE FROM public.tenants WHERE id = ANY($1::text[])", [tenant_a, tenant_b]

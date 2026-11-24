@@ -1,58 +1,4 @@
 services:
-  api:
-    build:
-      context: ./apps/api
-    environment:
-      ENVIRONMENT: development
-      LOG_LEVEL: INFO
-      AUTH_ENABLED: ${AUTH_ENABLED:-false}
-      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER:-}
-      KEYCLOAK_AUDIENCE: ${KEYCLOAK_AUDIENCE:-agentos-api}
-      KEYCLOAK_JWKS_URL: ${KEYCLOAK_JWKS_URL:-}
-      DATABASE_URL: postgresql://agentos_app:${AGENTOS_APP_PASSWORD:-agentos_app_dev_only}@postgres:5432/agentos
-      MIGRATION_DATABASE_URL: postgresql://agentos:${POSTGRES_PASSWORD:-agentos_dev_only}@postgres:5432/agentos
-      REDIS_URL: redis://redis:6379/0
-      CORS_ORIGINS: http://localhost:3000
-    ports:
-      - "8000:8000"
-    depends_on:
-      worker:
-    build:
-      context: ./apps/api
-    command: ["python", "-m", "app.worker"]
-    environment:
-      ENVIRONMENT: development
-      LOG_LEVEL: INFO
-      DATABASE_URL: postgresql://agentos_app:${AGENTOS_APP_PASSWORD:-agentos_app_dev_only}@postgres:5432/agentos
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-    depends_on:
-      db-bootstrap:
-        condition: service_completed_successfully
-    restart: unless-stopped
-
-  db-bootstrap:
-        condition: service_completed_successfully
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  db-bootstrap:
-    image: postgres:16-alpine
-    environment:
-      PGHOST: postgres
-      PGPORT: 5432
-      PGDATABASE: agentos
-      PGUSER: agentos
-      PGPASSWORD: ${POSTGRES_PASSWORD:-agentos_dev_only}
-      AGENTOS_APP_PASSWORD: ${AGENTOS_APP_PASSWORD:-agentos_app_dev_only}
-    volumes:
-      - ./apps/api/docker/postgres:/bootstrap:ro
-    entrypoint: ["/bin/sh", "/bootstrap/001-create-app-role.sh"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: "no"
-
   postgres:
     image: postgres:16-alpine
     environment:
@@ -82,6 +28,60 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
+
+  db-bootstrap:
+    image: postgres:16-alpine
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: agentos
+      PGUSER: agentos
+      PGPASSWORD: ${POSTGRES_PASSWORD:-agentos_dev_only}
+      AGENTOS_APP_PASSWORD: ${AGENTOS_APP_PASSWORD:-agentos_app_dev_only}
+    volumes:
+      - ./apps/api/docker/postgres:/bootstrap:ro
+    entrypoint: ["/bin/sh", "/bootstrap/001-create-app-role.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ./apps/api
+    environment:
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+      AUTH_ENABLED: ${AUTH_ENABLED:-false}
+      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER:-}
+      KEYCLOAK_AUDIENCE: ${KEYCLOAK_AUDIENCE:-agentos-api}
+      KEYCLOAK_JWKS_URL: ${KEYCLOAK_JWKS_URL:-}
+      DATABASE_URL: postgresql://agentos_app:${AGENTOS_APP_PASSWORD:-agentos_app_dev_only}@postgres:5432/agentos
+      MIGRATION_DATABASE_URL: postgresql://agentos:${POSTGRES_PASSWORD:-agentos_dev_only}@postgres:5432/agentos
+      REDIS_URL: redis://redis:6379/0
+      CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8000:8000"
+    depends_on:
+      db-bootstrap:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./apps/api
+    command: ["python", "-m", "app.worker"]
+    environment:
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+      DATABASE_URL: postgresql://agentos_app:${AGENTOS_APP_PASSWORD:-agentos_app_dev_only}@postgres:5432/agentos
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    depends_on:
+      db-bootstrap:
+        condition: service_completed_successfully
     restart: unless-stopped
 
 volumes:
