@@ -398,7 +398,7 @@ async def execute_tool_for_run(
 async def execute_approved_tool(
     approval_id: UUID,
     request: Request,
-    principal: Principal = Depends(get_current_principal),
+    principal: Annotated[Principal, Depends(get_current_principal)],
 ):
     settings = get_settings()
     if not settings.tool_execution_enabled:
