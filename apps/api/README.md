@@ -179,4 +179,4 @@ The internal `ERPNextReadOnlyClient` supports only fixed GET operations for Item
 
 Set `CONNECTOR_ALLOWED_HOSTS` in the deployment environment. The host list must be controlled by platform operations, not by tenant connector configuration. Network egress controls must independently restrict outbound destinations to approved public ERPNext hosts and block loopback, private, link-local, and metadata-service ranges; application hostname allowlisting alone is not a substitute for network egress policy.
 
-The client is an internal service only. No HTTP endpoint or agent tool invokes it yet. Live ERPNext access remains disabled until egress controls and end-to-end integration tests are deployed and reviewed.
+The internal `build_erpnext_readonly_client` factory checks that the connector belongs to the current tenant, is active, has stored credentials, and targets a platform-approved host before constructing the client. The client is an internal service only. No HTTP endpoint or agent tool invokes it yet. Live ERPNext access remains disabled until egress controls and end-to-end integration tests are deployed and reviewed.
