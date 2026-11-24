@@ -58,7 +58,7 @@ def test_request_model_rejects_extra_fields_and_oversized_arguments():
             arguments={"connector_id": str(uuid4()), "url": "https://attacker.invalid"},
         )
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         ToolExecutionRequest(
             tool_id="erpnext.items.list",
             action="list",
