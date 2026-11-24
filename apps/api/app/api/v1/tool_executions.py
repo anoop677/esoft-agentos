@@ -4,7 +4,7 @@ import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.auth import Principal, get_current_principal
 from app.core.config import get_settings
@@ -24,6 +24,13 @@ class ToolExecutionRequest(BaseModel):
     tool_id: str = Field(min_length=1, max_length=160)
     action: str = Field(min_length=1, max_length=32)
     arguments: dict = Field(default_factory=dict)
+
+    @field_validator("arguments")
+    @classmethod
+    def arguments_are_bounded(cls, value: dict) -> dict:
+        if len(json.dumps(value, ensure_ascii=False).encode("utf-8")) > 16384:
+            raise ValueError("Tool arguments must not exceed 16 KiB")
+        return value
 
 
 def _json(value):
@@ -150,16 +157,31 @@ async def _reserve_and_call(
                 connection, principal, run_id, tool_id, action
             )
             if decision.approval_required and approval_id is None:
+                safe_arguments = sanitize_arguments(arguments)
                 approval = await connection.fetchrow(
                     """
-                    INSERT INTO public.agent_approvals
-                        (tenant_id, run_id, tool_id, action, arguments, requested_by)
-                    VALUES ($1, $2, $3, $4, $5::jsonb, $6)
-                    RETURNING id, status, expires_at
+                    SELECT id, status, expires_at
+                    FROM public.agent_approvals
+                    WHERE tenant_id = $1 AND run_id = $2 AND tool_id = $3
+                      AND action = $4 AND status = 'pending'
+                      AND arguments = $5::jsonb
+                    ORDER BY created_at DESC
+                    LIMIT 1
                     """,
                     principal.tenant_id, run_id, tool_id, action,
-                    json.dumps(sanitize_arguments(arguments)), principal.subject,
+                    json.dumps(safe_arguments),
                 )
+                if approval is None:
+                    approval = await connection.fetchrow(
+                        """
+                        INSERT INTO public.agent_approvals
+                            (tenant_id, run_id, tool_id, action, arguments, requested_by)
+                        VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+                        RETURNING id, status, expires_at
+                        """,
+                        principal.tenant_id, run_id, tool_id, action,
+                        json.dumps(safe_arguments), principal.subject,
+                    )
                 await _event(connection, principal, run_id, "approval_requested", {
                     "approval_id": str(approval["id"]), "tool_id": tool_id,
                     "action": action, "source": "tool_execution",
