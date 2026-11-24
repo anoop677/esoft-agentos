@@ -4,6 +4,7 @@ Only fixed DocType list endpoints are exposed. The caller cannot provide a URL,
 path, HTTP method, or arbitrary query expression.
 """
 import json
+from typing import ClassVar
 from urllib.parse import urlsplit
 
 import httpx
@@ -14,7 +15,7 @@ class ERPNextConnectorError(RuntimeError):
 
 
 class ERPNextReadOnlyClient:
-    _RESOURCES = {
+    _RESOURCES: ClassVar[dict[str, tuple[str, tuple[str, ...]]]] = {
         "items": (
             "Item",
             ("name", "item_code", "item_name", "item_group", "stock_uom", "disabled"),
