@@ -170,6 +170,16 @@ async def _reserve_and_call(
             if approval_id is not None and role not in {"owner", "admin"}:
                 raise HTTPException(status_code=403, detail="Tenant administrator role required")
 
+            # Serialize tool reservations per run so concurrent retries cannot race
+            # the idempotency lookup or exceed the immutable per-run call limit.
+            locked_run = await connection.fetchrow(
+                """SELECT id FROM public.agent_runs
+                   WHERE tenant_id = $1 AND id = $2 FOR UPDATE""",
+                principal.tenant_id, run_id,
+            )
+            if locked_run is None:
+                raise HTTPException(status_code=404, detail="Agent run not found")
+
             existing = await connection.fetchrow(
                 """
                 SELECT id, run_id, approval_id, connector_id, tool_id, action,
