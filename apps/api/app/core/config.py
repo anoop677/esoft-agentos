@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     connector_encryption_key: str | None = None
     connector_encryption_key_version: str = "v1"
+    connector_allowed_hosts: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -34,6 +35,14 @@ class Settings(BaseSettings):
     @property
     def allowed_origins(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def allowed_connector_hosts(self) -> set[str]:
+        return {
+            host.strip().lower().rstrip(".")
+            for host in self.connector_allowed_hosts.split(",")
+            if host.strip()
+        }
 
 
 @lru_cache

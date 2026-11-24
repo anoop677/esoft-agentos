@@ -167,3 +167,16 @@ Credential endpoints (tenant owner/admin only for changes):
 - `DELETE /api/v1/connectors/{connector_id}/credentials` — revoke stored credentials.
 
 The worker-side `load_connector_credentials` helper decrypts only within a tenant-scoped database transaction. No live ERPNext requests are enabled by this change. Do not enable a connector for production use until outbound host controls, timeouts, response-size limits, read-only resource allowlists, and end-to-end integration tests are in place.
+
+## ERPNext read-only HTTP client (not yet exposed as an agent tool)
+
+The internal `ERPNextReadOnlyClient` supports only fixed GET operations for Items, Warehouses, Stock Bins, and Suppliers. It does not accept caller-provided URLs, HTTP methods, DocTypes, or arbitrary filters. It enforces:
+- Exact hostname matching against platform-controlled `CONNECTOR_ALLOWED_HOSTS` (comma-separated; no wildcard entries).
+- HTTPS only, default port 443, no URL credentials/query/fragment/path.
+- TLS verification, no environment proxy inheritance, and no redirects.
+- Bounded request timeout, page size (maximum 100), and response size (maximum 2 MB).
+- Sanitized errors that do not include response bodies or authorization headers.
+
+Set `CONNECTOR_ALLOWED_HOSTS` in the deployment environment. The host list must be controlled by platform operations, not by tenant connector configuration. Network egress controls must independently restrict outbound destinations to approved public ERPNext hosts and block loopback, private, link-local, and metadata-service ranges; application hostname allowlisting alone is not a substitute for network egress policy.
+
+The internal `build_erpnext_readonly_client` factory checks that the connector belongs to the current tenant, is active, has stored credentials, and targets a platform-approved host before constructing the client. The client is an internal service only. No HTTP endpoint or agent tool invokes it yet. Live ERPNext access remains disabled until egress controls and end-to-end integration tests are deployed and reviewed.
