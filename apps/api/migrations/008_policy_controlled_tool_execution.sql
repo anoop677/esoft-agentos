@@ -8,11 +8,14 @@ VALUES
     ('erpnext.suppliers.list', 'ERPNext: List suppliers', 'low', 'List a bounded page of ERPNext suppliers')
 ON CONFLICT (tool_id) DO NOTHING;
 
+ALTER TABLE public.agent_approvals
+    ADD CONSTRAINT uq_agent_approvals_tenant_id UNIQUE (tenant_id, id);
+
 CREATE TABLE IF NOT EXISTS public.agent_tool_executions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id TEXT NOT NULL,
     run_id UUID NOT NULL,
-    approval_id UUID REFERENCES public.agent_approvals(id) ON DELETE SET NULL,
+    approval_id UUID,
     connector_id UUID NOT NULL,
     tool_id TEXT NOT NULL REFERENCES public.agent_tool_catalog(tool_id),
     action TEXT NOT NULL CHECK (action = 'list'),
@@ -27,6 +30,8 @@ CREATE TABLE IF NOT EXISTS public.agent_tool_executions (
     completed_at TIMESTAMPTZ,
     FOREIGN KEY (tenant_id, run_id)
         REFERENCES public.agent_runs (tenant_id, id) ON DELETE CASCADE,
+    FOREIGN KEY (tenant_id, approval_id)
+        REFERENCES public.agent_approvals (tenant_id, id) ON DELETE RESTRICT,
     FOREIGN KEY (tenant_id, connector_id)
         REFERENCES public.agent_connectors (tenant_id, id) ON DELETE RESTRICT,
     UNIQUE (tenant_id, idempotency_key),
