@@ -135,7 +135,7 @@ class ModelGateway:
             "temperature": temperature,
         }
         if enable_tools:
-            request_body["tools"] = ERPnext_TOOL_DEFINITIONS
+            request_body["tools"] = ERPNEXT_TOOL_DEFINITIONS
             request_body["tool_choice"] = "auto"
         try:
             async with httpx.AsyncClient(
