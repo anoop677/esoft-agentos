@@ -5,6 +5,7 @@ Only ciphertext is persisted. AAD binds each ciphertext to its tenant, connector
 and key version to prevent cross-tenant or cross-connector substitution.
 """
 import base64
+import binascii
 import json
 import secrets
 from dataclasses import dataclass
@@ -31,7 +32,7 @@ def _aad(tenant_id: str, connector_id: str, key_version: str) -> bytes:
 def _cipher(encryption_key: str) -> AESGCM:
     try:
         key = base64.urlsafe_b64decode(encryption_key.encode("ascii"))
-    except (ValueError, UnicodeEncodeError) as exc:
+    except (ValueError, UnicodeEncodeError, binascii.Error) as exc:
         raise CredentialEncryptionError("Connector encryption key must be URL-safe base64") from exc
     if len(key) != 32:
         raise CredentialEncryptionError("Connector encryption key must decode to exactly 32 bytes")
