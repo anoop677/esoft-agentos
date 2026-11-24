@@ -1,4 +1,5 @@
 """Allowlisted, bounded ERPNext tool dispatch. No model-supplied URL or DocType is accepted."""
+# ruff: noqa: I001
 from uuid import UUID
 
 from app.core.config import Settings
