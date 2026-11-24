@@ -8,6 +8,7 @@ from app.api.v1.approvals import router as approvals_router
 from app.api.v1.connectors import router as connectors_router
 from app.api.v1.identity import router as identity_router
 from app.api.v1.runs import router as runs_router
+from app.api.v1.tool_executions import router as tool_executions_router
 from app.core.config import get_settings
 from app.health import router as health_router
 from app.infrastructure.connections import close_connections, open_connections
@@ -45,6 +46,7 @@ app.include_router(agents_router)
 app.include_router(runs_router)
 app.include_router(approvals_router)
 app.include_router(connectors_router)
+app.include_router(tool_executions_router)
 
 
 @app.get("/", tags=["system"])
