@@ -163,6 +163,8 @@ class ModelGateway:
         for item in data.get("output", []):
             if item.get("type") != "function_call":
                 continue
+            if not enable_tools:
+                raise ModelGatewayError("Model returned a tool call while tool execution is disabled")
             name = item.get("name")
             if name not in MODEL_TOOL_MAP:
                 raise ModelGatewayError("Model requested an unregistered tool")
