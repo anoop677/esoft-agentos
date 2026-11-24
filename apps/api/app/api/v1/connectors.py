@@ -7,7 +7,15 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator
 
+from pydantic import SecretStr
+
 from app.core.auth import Principal, get_current_principal
+from app.core.config import get_settings
+from app.infrastructure.credential_vault import (
+    EncryptedCredentials,
+    encrypt_credentials,
+)
+
 from app.infrastructure.connectors import (
     get_connector_adapter,
     list_connector_descriptors,
@@ -206,3 +214,99 @@ async def validate_connector_configuration(
         "errors": errors,
         "message": "Configuration validated only; no remote ERPNext request was made.",
     }
+
+
+
+class ERPNextCredentialsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    api_key: SecretStr = Field(min_length=1, max_length=512, repr=False)
+    api_secret: SecretStr = Field(min_length=1, max_length=512, repr=False)
+
+
+@router.put("/{connector_id}/credentials", status_code=status.HTTP_200_OK)
+async def put_connector_credentials(
+    connector_id: UUID,
+    payload: ERPNextCredentialsInput,
+    connection: Annotated[asyncpg.Connection, Depends(get_tenant_admin_connection)],
+    principal: Annotated[Principal, Depends(get_current_principal)],
+) -> dict:
+    settings = get_settings()
+    if not settings.connector_encryption_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Connector credential encryption is not configured",
+        )
+
+    exists = await connection.fetchval(
+        "SELECT 1 FROM public.agent_connectors WHERE tenant_id = $1 AND id = $2",
+        principal.tenant_id, connector_id,
+    )
+    if not exists:
+        raise HTTPException(status_code=404, detail="Connector not found")
+
+    encrypted = encrypt_credentials(
+        {
+            "api_key": payload.api_key.get_secret_value(),
+            "api_secret": payload.api_secret.get_secret_value(),
+        },
+        encryption_key=settings.connector_encryption_key,
+        key_version=settings.connector_encryption_key_version,
+        tenant_id=principal.tenant_id,
+        connector_id=str(connector_id),
+    )
+    await connection.execute(
+        """
+        INSERT INTO public.agent_connector_secrets
+            (tenant_id, connector_id, ciphertext, nonce, key_version, updated_by)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (tenant_id, connector_id) DO UPDATE
+        SET ciphertext = EXCLUDED.ciphertext,
+            nonce = EXCLUDED.nonce,
+            key_version = EXCLUDED.key_version,
+            updated_by = EXCLUDED.updated_by,
+            updated_at = now()
+        """,
+        principal.tenant_id, connector_id, encrypted.ciphertext, encrypted.nonce,
+        encrypted.key_version, principal.subject,
+    )
+    return {"configured": True, "message": "Credentials encrypted and stored; secret values are never returned."}
+
+
+@router.get("/{connector_id}/credentials")
+async def get_connector_credentials_status(
+    connector_id: UUID,
+    connection: Annotated[asyncpg.Connection, Depends(get_tenant_connection)],
+    principal: Annotated[Principal, Depends(get_current_principal)],
+) -> dict:
+    row = await connection.fetchrow(
+        """
+        SELECT s.key_version, s.updated_at, s.updated_by
+        FROM public.agent_connector_secrets s
+        JOIN public.agent_connectors c
+          ON c.tenant_id = s.tenant_id AND c.id = s.connector_id
+        WHERE s.tenant_id = $1 AND s.connector_id = $2
+        """,
+        principal.tenant_id, connector_id,
+    )
+    if row is None:
+        return {"configured": False}
+    return {"configured": True, "key_version": row["key_version"], "updated_at": row["updated_at"]}
+
+
+@router.delete("/{connector_id}/credentials", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_connector_credentials(
+    connector_id: UUID,
+    connection: Annotated[asyncpg.Connection, Depends(get_tenant_admin_connection)],
+    principal: Annotated[Principal, Depends(get_current_principal)],
+) -> None:
+    exists = await connection.fetchval(
+        "SELECT 1 FROM public.agent_connectors WHERE tenant_id = $1 AND id = $2",
+        principal.tenant_id, connector_id,
+    )
+    if not exists:
+        raise HTTPException(status_code=404, detail="Connector not found")
+    await connection.execute(
+        "DELETE FROM public.agent_connector_secrets WHERE tenant_id = $1 AND connector_id = $2",
+        principal.tenant_id, connector_id,
+    )
