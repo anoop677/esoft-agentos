@@ -77,3 +77,34 @@ def decrypt_credentials(
     ):
         raise CredentialEncryptionError("Decrypted connector credential payload is invalid")
     return values
+
+
+
+async def load_connector_credentials(
+    connection,
+    *,
+    tenant_id: str,
+    connector_id: str,
+    encryption_key: str,
+) -> dict[str, str] | None:
+    """Load and decrypt a connector secret inside the caller's tenant-scoped transaction."""
+    row = await connection.fetchrow(
+        """
+        SELECT ciphertext, nonce, key_version
+        FROM public.agent_connector_secrets
+        WHERE tenant_id = $1 AND connector_id = $2
+        """,
+        tenant_id, connector_id,
+    )
+    if row is None:
+        return None
+    return decrypt_credentials(
+        EncryptedCredentials(
+            ciphertext=bytes(row["ciphertext"]),
+            nonce=bytes(row["nonce"]),
+            key_version=row["key_version"],
+        ),
+        encryption_key=encryption_key,
+        tenant_id=tenant_id,
+        connector_id=str(connector_id),
+    )
