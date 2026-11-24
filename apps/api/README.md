@@ -148,3 +148,22 @@ curl -X POST http://localhost:8000/api/v1/connectors \
 ```
 
 This example registers configuration only. It does not authenticate or connect to ERPNext.
+
+## Encrypted connector credentials
+
+Migration `007_connector_secret_vault.sql` adds a tenant-isolated secret table. Connector API credentials are encrypted using AES-256-GCM before persistence. The authenticated additional data binds ciphertext to the tenant ID, connector ID, and key version. The application never returns stored secret values.
+
+Configure `CONNECTOR_ENCRYPTION_KEY` as a URL-safe base64-encoded 32-byte key, and `CONNECTOR_ENCRYPTION_KEY_VERSION` as its version label. Generate a key with:
+
+```bash
+python -c "import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
+```
+
+Keep this key in a deployment secret manager, not in Git or the database. Back it up securely: losing the key makes existing encrypted credentials unrecoverable. The current implementation uses one configured active key; key rotation and multi-key migration need a separate controlled rollout.
+
+Credential endpoints (tenant owner/admin only for changes):
+- `PUT /api/v1/connectors/{connector_id}/credentials` — encrypt and store ERPNext API key/secret.
+- `GET /api/v1/connectors/{connector_id}/credentials` — return configuration status only, never secret values.
+- `DELETE /api/v1/connectors/{connector_id}/credentials` — revoke stored credentials.
+
+The worker-side `load_connector_credentials` helper decrypts only within a tenant-scoped database transaction. No live ERPNext requests are enabled by this change. Do not enable a connector for production use until outbound host controls, timeouts, response-size limits, read-only resource allowlists, and end-to-end integration tests are in place.
