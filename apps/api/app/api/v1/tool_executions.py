@@ -169,7 +169,7 @@ async def _reserve_and_call(
                 role = await _set_tenant(connection, principal)
                 if approval_id is not None and role not in {"owner", "admin"}:
                     raise HTTPException(status_code=403, detail="Tenant administrator role required")
-    
+
                 existing = await connection.fetchrow(
                     """
                     SELECT id, run_id, approval_id, connector_id, tool_id, action,
@@ -192,7 +192,7 @@ async def _reserve_and_call(
                         status_code=409,
                         detail="Idempotency-Key was already used for a different tool request",
                     )
-    
+
                 connector = await connection.fetchrow(
                     """
                     SELECT connector_type, status
@@ -205,7 +205,7 @@ async def _reserve_and_call(
                     raise HTTPException(status_code=404, detail="Connector not found in this tenant")
                 if connector["connector_type"] != "erpnext" or connector["status"] != "active":
                     raise HTTPException(status_code=409, detail="ERPNext connector must be active")
-    
+
                 decision = await _policy_context(
                     connection, principal, run_id, tool_id, action,
                     exclude_execution_id=str(existing["id"]) if existing else None,
@@ -246,7 +246,7 @@ async def _reserve_and_call(
                         "approval_id": str(approval["id"]),
                         "expires_at": approval["expires_at"].isoformat(),
                     }
-    
+
                 if approval_id is not None:
                     approval = await connection.fetchrow(
                         """
@@ -268,7 +268,7 @@ async def _reserve_and_call(
                     stored_arguments = _json(approval["arguments"])
                     if stored_arguments != sanitize_arguments(arguments):
                         raise HTTPException(status_code=409, detail="Execution arguments differ from approved arguments")
-    
+
                 if existing is not None:
                     if existing["status"] == "succeeded":
                         return {
@@ -280,7 +280,7 @@ async def _reserve_and_call(
                         status_code=409,
                         detail="This idempotency key has already been attempted; execution will not be repeated",
                     )
-    
+
                 execution_id = await connection.fetchval(
                     """
                     INSERT INTO public.agent_tool_executions
@@ -296,7 +296,7 @@ async def _reserve_and_call(
                     "execution_id": str(execution_id), "approval_id": str(approval_id) if approval_id else None,
                     "connector_id": str(connector_id), "tool_id": tool_id, "action": action,
                 })
-    
+
     except ToolPolicyDenied as exc:
         async with pool.acquire() as connection:
             async with connection.transaction():
