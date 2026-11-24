@@ -3,7 +3,6 @@ import json
 import logging
 from uuid import UUID
 
-import asyncpg
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -12,7 +11,7 @@ from app.core.config import get_settings
 from app.infrastructure.policy import evaluate_tool_proposal, sanitize_arguments
 from app.infrastructure.tool_execution import (
     ToolExecutionError,
-    execute_erpnext_tool,
+    prepare_erpnext_tool,
     validate_tool_arguments,
 )
 
@@ -92,7 +91,7 @@ async def _policy_context(connection, principal, run_id, tool_id, action):
         SELECT count(*) FROM public.agent_run_events
         WHERE tenant_id = $1 AND run_id = $2
           AND event_type IN (
-            'approval_requested', 'tool_proposal_authorized', 'tool_execution_started'
+            'tool_proposal_authorized', 'tool_execution_started'
           )
           AND details->>'tool_id' = $3
         """,
@@ -202,7 +201,7 @@ async def _reserve_and_call(
                 if existing["status"] == "succeeded":
                     return {
                         "status": "succeeded", "execution_id": str(existing["id"]),
-                        "data": _json(existing["output"]),
+                        "data": _json(existing["output"]).get("data", []),
                         "idempotent_replay": True,
                     }
                 raise HTTPException(
@@ -233,10 +232,12 @@ async def _reserve_and_call(
                 await connection.execute(
                     "SELECT set_config('app.tenant_id', $1, true)", principal.tenant_id
                 )
-                data = await execute_erpnext_tool(
+                client, limit, start, method_name = await prepare_erpnext_tool(
                     connection, settings=settings, tenant_id=principal.tenant_id,
                     tool_id=tool_id, action=action, arguments=arguments,
                 )
+        async with client:
+            data = await getattr(client, method_name)(limit=limit, start=start)
         output = {"data": data}
     except ToolExecutionError as exc:
         async with pool.acquire() as connection:
