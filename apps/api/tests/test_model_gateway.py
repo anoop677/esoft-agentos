@@ -72,3 +72,71 @@ async def test_model_gateway_parses_responses_api_text_and_usage():
 
     assert result["text"] == "Inventory looks healthy."
     assert result["usage"] == {"input_tokens": 23, "output_tokens": 8}
+
+
+
+@pytest.mark.asyncio
+async def test_model_gateway_exposes_only_fixed_tools_and_parses_proposal():
+    import json
+
+    import httpx
+
+    def handler(request):
+        body = json.loads(request.content)
+        assert body["tool_choice"] == "auto"
+        assert "A proposal is not execution" in body["instructions"]
+        assert {tool["name"] for tool in body["tools"]} == {
+            "erpnext_items_list",
+            "erpnext_warehouses_list",
+            "erpnext_stock_bins_list",
+            "erpnext_suppliers_list",
+        }
+        assert all(
+            tool["parameters"]["additionalProperties"] is False
+            for tool in body["tools"]
+        )
+        return httpx.Response(
+            200,
+            json={
+                "model": "gpt-4.1-mini",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "name": "erpnext_items_list",
+                        "call_id": "call_123",
+                        "arguments": json.dumps({
+                            "connector_id": "11111111-1111-4111-8111-111111111111",
+                            "limit": 25,
+                            "start": 0,
+                        }),
+                    }
+                ],
+                "usage": {"input_tokens": 20, "output_tokens": 4},
+            },
+        )
+
+    gateway = ModelGateway(
+        openai_api_key="test-key",
+        transport=httpx.MockTransport(handler),
+    )
+    result = await gateway.generate(
+        provider="openai",
+        model="gpt-4.1-mini",
+        instructions="Inspect inventory",
+        input_payload={"question": "List inventory"},
+        max_output_tokens=100,
+        temperature=0,
+        enable_tools=True,
+    )
+
+    assert result["text"] == ""
+    assert result["tool_calls"] == [{
+        "name": "erpnext_items_list",
+        "tool_id": "erpnext.items.list",
+        "arguments": {
+            "connector_id": "11111111-1111-4111-8111-111111111111",
+            "limit": 25,
+            "start": 0,
+        },
+        "call_id": "call_123",
+    }]
