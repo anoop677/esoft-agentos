@@ -2,6 +2,7 @@ import pytest
 from uuid import uuid4
 
 from app.api.v1.tool_executions import ToolExecutionRequest
+from app.core.config import Settings
 from app.infrastructure.tool_execution import (
     TOOL_METHODS,
     ToolExecutionError,
@@ -61,3 +62,7 @@ def test_request_model_rejects_extra_fields_and_oversized_arguments():
             action="list",
             arguments={"connector_id": str(uuid4()), "note": "x" * 17000},
         )
+
+
+def test_tool_execution_feature_flag_defaults_off():
+    assert Settings().tool_execution_enabled is False
