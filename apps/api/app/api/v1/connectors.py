@@ -9,12 +9,11 @@ from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, SecretStr, field_
 
 from app.core.auth import Principal, get_current_principal
 from app.core.config import get_settings
-from app.infrastructure.credential_vault import CredentialEncryptionError, encrypt_credentials
-
 from app.infrastructure.connectors import (
     get_connector_adapter,
     list_connector_descriptors,
 )
+from app.infrastructure.credential_vault import CredentialEncryptionError, encrypt_credentials
 from app.infrastructure.tenant_db import get_tenant_admin_connection, get_tenant_connection
 
 router = APIRouter(prefix="/api/v1/connectors", tags=["connectors"])
