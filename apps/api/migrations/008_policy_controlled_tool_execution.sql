@@ -31,9 +31,9 @@ CREATE TABLE IF NOT EXISTS public.agent_tool_executions (
     FOREIGN KEY (tenant_id, run_id)
         REFERENCES public.agent_runs (tenant_id, id) ON DELETE CASCADE,
     FOREIGN KEY (tenant_id, approval_id)
-        REFERENCES public.agent_approvals (tenant_id, id) ON DELETE RESTRICT,
+        REFERENCES public.agent_approvals (tenant_id, id) ON DELETE CASCADE,
     FOREIGN KEY (tenant_id, connector_id)
-        REFERENCES public.agent_connectors (tenant_id, id) ON DELETE RESTRICT,
+        REFERENCES public.agent_connectors (tenant_id, id) ON DELETE CASCADE,
     UNIQUE (tenant_id, idempotency_key),
     CHECK (jsonb_typeof(arguments) = 'object'),
     CHECK (output IS NULL OR jsonb_typeof(output) IN ('object', 'array'))
