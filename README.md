@@ -175,7 +175,7 @@ API endpoints:
 - `POST /api/v1/runs/{run_id}/tool-executions` — propose or execute an allowed read-only tool.
 - `POST /api/v1/approvals/{approval_id}/execute` — execute an already approved ERPNext read action (tenant owner/admin only).
 
-This milestone does not wire model-generated tool calls into the worker loop, and it does not add ERPNext write operations. The API execution route is the controlled boundary for a future orchestrator integration. CI uses unit tests and mocked HTTP only; it does not contact a live ERPNext instance.
+This milestone adds worker-side model tool proposals with a human-approval boundary; it does not add ERPNext write operations or automatic tool execution. The API execution route remains the controlled boundary for external requests. CI uses unit tests and mocked HTTP only; it does not contact a live ERPNext instance.
 
 
 ### Worker tool proposals and approval
