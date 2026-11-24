@@ -165,8 +165,7 @@ async def _reserve_and_call(
     pool = request.app.state.db_pool
     execution_id = None
     try:
-        async with pool.acquire() as connection:
-            async with connection.transaction():
+        async with pool.acquire() as connection, connection.transaction():
                 role = await _set_tenant(connection, principal)
                 if approval_id is not None and role not in {"owner", "admin"}:
                     raise HTTPException(status_code=403, detail="Tenant administrator role required")
@@ -299,8 +298,7 @@ async def _reserve_and_call(
                 })
 
     except ToolPolicyDenied as exc:
-        async with pool.acquire() as connection:
-            async with connection.transaction():
+        async with pool.acquire() as connection, connection.transaction():
                 await _set_tenant(connection, principal)
                 await _event(connection, principal, run_id, "tool_execution_denied", {
                     "tool_id": tool_id, "action": action, "reason": str(exc),
@@ -309,8 +307,7 @@ async def _reserve_and_call(
 
     # Network I/O occurs after the reservation transaction commits and releases its DB connection.
     try:
-        async with pool.acquire() as connection:
-            async with connection.transaction():
+        async with pool.acquire() as connection, connection.transaction():
                 await connection.execute(
                     "SELECT set_config('app.tenant_id', $1, true)", principal.tenant_id
                 )
@@ -327,8 +324,7 @@ async def _reserve_and_call(
                 raise ToolExecutionError("ERPNext read request failed") from exc
         output = {"data": data}
     except ToolExecutionError as exc:
-        async with pool.acquire() as connection:
-            async with connection.transaction():
+        async with pool.acquire() as connection, connection.transaction():
                 await connection.execute(
                     "SELECT set_config('app.tenant_id', $1, true)", principal.tenant_id
                 )
@@ -346,8 +342,7 @@ async def _reserve_and_call(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Unexpected tool execution failure; execution_id=%s", execution_id)
-        async with pool.acquire() as connection:
-            async with connection.transaction():
+        async with pool.acquire() as connection, connection.transaction():
                 await connection.execute(
                     "SELECT set_config('app.tenant_id', $1, true)", principal.tenant_id
                 )
@@ -409,8 +404,7 @@ async def execute_approved_tool(
     if not settings.tool_execution_enabled:
         raise HTTPException(status_code=503, detail="Tool execution is disabled by platform configuration")
     pool = request.app.state.db_pool
-    async with pool.acquire() as connection:
-        async with connection.transaction():
+    async with pool.acquire() as connection, connection.transaction():
             role = await _set_tenant(connection, principal)
             if role not in {"owner", "admin"}:
                 raise HTTPException(status_code=403, detail="Tenant administrator role required")
