@@ -10,7 +10,7 @@ class ModelGatewayError(Exception):
 
 # These names are the only functions exposed to the model. They map to the
 # fixed server-side ERPNext registry; the model never supplies URLs or methods.
-ERPnext_TOOL_DEFINITIONS = [
+ERPNEXT_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "name": "erpnext_items_list",
@@ -168,7 +168,11 @@ class ModelGateway:
                 raise ModelGatewayError("Model requested an unregistered tool")
             raw_arguments = item.get("arguments", "{}")
             try:
-                arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
+                arguments = (
+                    json.loads(raw_arguments)
+                    if isinstance(raw_arguments, str)
+                    else raw_arguments
+                )
             except (TypeError, ValueError) as exc:
                 raise ModelGatewayError("Model returned invalid tool arguments") from exc
             if not isinstance(arguments, dict):
