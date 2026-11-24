@@ -20,6 +20,10 @@ router = APIRouter(prefix="/api/v1", tags=["tool-execution"])
 logger = logging.getLogger("agentos.tool_execution")
 
 
+class ToolPolicyDenied(RuntimeError):
+    """A deterministic policy rejection that must be audited after rollback."""
+
+
 class ToolExecutionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     tool_id: str = Field(min_length=1, max_length=160)
@@ -131,10 +135,7 @@ async def _policy_context(
         agents_enabled=row["agents_enabled"],
     )
     if not decision.allowed:
-        await _event(connection, principal, run_id, "tool_execution_denied", {
-            "tool_id": tool_id, "action": action, "reason": decision.reason,
-        })
-        raise HTTPException(status_code=403, detail=decision.reason)
+        raise ToolPolicyDenied(decision.reason)
     return decision
 
 
@@ -162,138 +163,148 @@ async def _reserve_and_call(
 
     pool = request.app.state.db_pool
     execution_id = None
-    async with pool.acquire() as connection:
-        async with connection.transaction():
-            role = await _set_tenant(connection, principal)
-            if approval_id is not None and role not in {"owner", "admin"}:
-                raise HTTPException(status_code=403, detail="Tenant administrator role required")
-
-            existing = await connection.fetchrow(
-                """
-                SELECT id, run_id, approval_id, connector_id, tool_id, action,
-                       arguments, status, output
-                FROM public.agent_tool_executions
-                WHERE tenant_id = $1 AND idempotency_key = $2
-                FOR UPDATE
-                """,
-                principal.tenant_id, idempotency_key,
-            )
-            if existing is not None and (
-                existing["run_id"] != run_id
-                or existing["approval_id"] != approval_id
-                or existing["connector_id"] != connector_id
-                or existing["tool_id"] != tool_id
-                or existing["action"] != action
-                or _json(existing["arguments"]) != sanitize_arguments(arguments)
-            ):
-                raise HTTPException(
-                    status_code=409,
-                    detail="Idempotency-Key was already used for a different tool request",
-                )
-
-            connector = await connection.fetchrow(
-                """
-                SELECT connector_type, status
-                FROM public.agent_connectors
-                WHERE tenant_id = $1 AND id = $2
-                """,
-                principal.tenant_id, connector_id,
-            )
-            if connector is None:
-                raise HTTPException(status_code=404, detail="Connector not found in this tenant")
-            if connector["connector_type"] != "erpnext" or connector["status"] != "active":
-                raise HTTPException(status_code=409, detail="ERPNext connector must be active")
-
-            decision = await _policy_context(
-                connection, principal, run_id, tool_id, action,
-                exclude_execution_id=str(existing["id"]) if existing else None,
-                allow_completed=approval_id is not None or existing is not None,
-            )
-            if decision.approval_required and approval_id is None:
-                safe_arguments = sanitize_arguments(arguments)
-                approval = await connection.fetchrow(
+    try:
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                role = await _set_tenant(connection, principal)
+                if approval_id is not None and role not in {"owner", "admin"}:
+                    raise HTTPException(status_code=403, detail="Tenant administrator role required")
+    
+                existing = await connection.fetchrow(
                     """
-                    SELECT id, status, expires_at
-                    FROM public.agent_approvals
-                    WHERE tenant_id = $1 AND run_id = $2 AND tool_id = $3
-                      AND action = $4 AND status = 'pending'
-                      AND arguments = $5::jsonb
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                    """,
-                    principal.tenant_id, run_id, tool_id, action,
-                    json.dumps(safe_arguments),
-                )
-                if approval is None:
-                    approval = await connection.fetchrow(
-                        """
-                        INSERT INTO public.agent_approvals
-                            (tenant_id, run_id, tool_id, action, arguments, requested_by)
-                        VALUES ($1, $2, $3, $4, $5::jsonb, $6)
-                        RETURNING id, status, expires_at
-                        """,
-                        principal.tenant_id, run_id, tool_id, action,
-                        json.dumps(safe_arguments), principal.subject,
-                    )
-                await _event(connection, principal, run_id, "approval_requested", {
-                    "approval_id": str(approval["id"]), "tool_id": tool_id,
-                    "action": action, "source": "tool_execution",
-                })
-                return {
-                    "status": "approval_pending",
-                    "approval_id": str(approval["id"]),
-                    "expires_at": approval["expires_at"].isoformat(),
-                }
-
-            if approval_id is not None:
-                approval = await connection.fetchrow(
-                    """
-                    SELECT id, status, tool_id, action, arguments, expires_at
-                    FROM public.agent_approvals
-                    WHERE tenant_id = $1 AND run_id = $2 AND id = $3
+                    SELECT id, run_id, approval_id, connector_id, tool_id, action,
+                           arguments, status, output
+                    FROM public.agent_tool_executions
+                    WHERE tenant_id = $1 AND idempotency_key = $2
                     FOR UPDATE
                     """,
-                    principal.tenant_id, run_id, approval_id,
+                    principal.tenant_id, idempotency_key,
                 )
-                if approval is None:
-                    raise HTTPException(status_code=404, detail="Approval not found")
-                if approval["status"] != "approved":
-                    raise HTTPException(status_code=409, detail="Approval is not approved")
-                if approval["expires_at"] <= await connection.fetchval("SELECT now()"):
-                    raise HTTPException(status_code=409, detail="Approval has expired")
-                if approval["tool_id"] != tool_id or approval["action"] != action:
-                    raise HTTPException(status_code=409, detail="Approval does not match this tool action")
-                stored_arguments = _json(approval["arguments"])
-                if stored_arguments != sanitize_arguments(arguments):
-                    raise HTTPException(status_code=409, detail="Execution arguments differ from approved arguments")
-
-            if existing is not None:
-                if existing["status"] == "succeeded":
+                if existing is not None and (
+                    existing["run_id"] != run_id
+                    or existing["approval_id"] != approval_id
+                    or existing["connector_id"] != connector_id
+                    or existing["tool_id"] != tool_id
+                    or existing["action"] != action
+                    or _json(existing["arguments"]) != sanitize_arguments(arguments)
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Idempotency-Key was already used for a different tool request",
+                    )
+    
+                connector = await connection.fetchrow(
+                    """
+                    SELECT connector_type, status
+                    FROM public.agent_connectors
+                    WHERE tenant_id = $1 AND id = $2
+                    """,
+                    principal.tenant_id, connector_id,
+                )
+                if connector is None:
+                    raise HTTPException(status_code=404, detail="Connector not found in this tenant")
+                if connector["connector_type"] != "erpnext" or connector["status"] != "active":
+                    raise HTTPException(status_code=409, detail="ERPNext connector must be active")
+    
+                decision = await _policy_context(
+                    connection, principal, run_id, tool_id, action,
+                    exclude_execution_id=str(existing["id"]) if existing else None,
+                    allow_completed=approval_id is not None or existing is not None,
+                )
+                if decision.approval_required and approval_id is None:
+                    safe_arguments = sanitize_arguments(arguments)
+                    approval = await connection.fetchrow(
+                        """
+                        SELECT id, status, expires_at
+                        FROM public.agent_approvals
+                        WHERE tenant_id = $1 AND run_id = $2 AND tool_id = $3
+                          AND action = $4 AND status = 'pending'
+                          AND arguments = $5::jsonb
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                        """,
+                        principal.tenant_id, run_id, tool_id, action,
+                        json.dumps(safe_arguments),
+                    )
+                    if approval is None:
+                        approval = await connection.fetchrow(
+                            """
+                            INSERT INTO public.agent_approvals
+                                (tenant_id, run_id, tool_id, action, arguments, requested_by)
+                            VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+                            RETURNING id, status, expires_at
+                            """,
+                            principal.tenant_id, run_id, tool_id, action,
+                            json.dumps(safe_arguments), principal.subject,
+                        )
+                    await _event(connection, principal, run_id, "approval_requested", {
+                        "approval_id": str(approval["id"]), "tool_id": tool_id,
+                        "action": action, "source": "tool_execution",
+                    })
                     return {
-                        "status": "succeeded", "execution_id": str(existing["id"]),
-                        "data": _json(existing["output"]).get("data", []),
-                        "idempotent_replay": True,
+                        "status": "approval_pending",
+                        "approval_id": str(approval["id"]),
+                        "expires_at": approval["expires_at"].isoformat(),
                     }
-                raise HTTPException(
-                    status_code=409,
-                    detail="This idempotency key has already been attempted; execution will not be repeated",
+    
+                if approval_id is not None:
+                    approval = await connection.fetchrow(
+                        """
+                        SELECT id, status, tool_id, action, arguments, expires_at
+                        FROM public.agent_approvals
+                        WHERE tenant_id = $1 AND run_id = $2 AND id = $3
+                        FOR UPDATE
+                        """,
+                        principal.tenant_id, run_id, approval_id,
+                    )
+                    if approval is None:
+                        raise HTTPException(status_code=404, detail="Approval not found")
+                    if approval["status"] != "approved":
+                        raise HTTPException(status_code=409, detail="Approval is not approved")
+                    if approval["expires_at"] <= await connection.fetchval("SELECT now()"):
+                        raise HTTPException(status_code=409, detail="Approval has expired")
+                    if approval["tool_id"] != tool_id or approval["action"] != action:
+                        raise HTTPException(status_code=409, detail="Approval does not match this tool action")
+                    stored_arguments = _json(approval["arguments"])
+                    if stored_arguments != sanitize_arguments(arguments):
+                        raise HTTPException(status_code=409, detail="Execution arguments differ from approved arguments")
+    
+                if existing is not None:
+                    if existing["status"] == "succeeded":
+                        return {
+                            "status": "succeeded", "execution_id": str(existing["id"]),
+                            "data": _json(existing["output"]).get("data", []),
+                            "idempotent_replay": True,
+                        }
+                    raise HTTPException(
+                        status_code=409,
+                        detail="This idempotency key has already been attempted; execution will not be repeated",
+                    )
+    
+                execution_id = await connection.fetchval(
+                    """
+                    INSERT INTO public.agent_tool_executions
+                        (tenant_id, run_id, approval_id, connector_id, tool_id, action,
+                         idempotency_key, arguments)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+                    RETURNING id
+                    """,
+                    principal.tenant_id, run_id, approval_id, connector_id, tool_id,
+                    action, idempotency_key, json.dumps(sanitize_arguments(arguments)),
                 )
-
-            execution_id = await connection.fetchval(
-                """
-                INSERT INTO public.agent_tool_executions
-                    (tenant_id, run_id, approval_id, connector_id, tool_id, action,
-                     idempotency_key, arguments)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
-                RETURNING id
-                """,
-                principal.tenant_id, run_id, approval_id, connector_id, tool_id,
-                action, idempotency_key, json.dumps(sanitize_arguments(arguments)),
-            )
-            await _event(connection, principal, run_id, "tool_execution_started", {
-                "execution_id": str(execution_id), "approval_id": str(approval_id) if approval_id else None,
-                "connector_id": str(connector_id), "tool_id": tool_id, "action": action,
-            })
+                await _event(connection, principal, run_id, "tool_execution_started", {
+                    "execution_id": str(execution_id), "approval_id": str(approval_id) if approval_id else None,
+                    "connector_id": str(connector_id), "tool_id": tool_id, "action": action,
+                })
+    
+    except ToolPolicyDenied as exc:
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await _set_tenant(connection, principal)
+                await _event(connection, principal, run_id, "tool_execution_denied", {
+                    "tool_id": tool_id, "action": action, "reason": str(exc),
+                })
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     # Network I/O occurs after the reservation transaction commits and releases its DB connection.
     try:
