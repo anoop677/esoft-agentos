@@ -61,6 +61,8 @@ services:
       MIGRATION_DATABASE_URL: postgresql://agentos:${POSTGRES_PASSWORD:-agentos_dev_only}@postgres:5432/agentos
       REDIS_URL: redis://redis:6379/0
       CORS_ORIGINS: http://localhost:3000
+      CONNECTOR_ENCRYPTION_KEY: ${CONNECTOR_ENCRYPTION_KEY:-}
+      CONNECTOR_ENCRYPTION_KEY_VERSION: ${CONNECTOR_ENCRYPTION_KEY_VERSION:-v1}
     ports:
       - "8000:8000"
     depends_on:
@@ -79,6 +81,8 @@ services:
       LOG_LEVEL: INFO
       DATABASE_URL: postgresql://agentos_app:${AGENTOS_APP_PASSWORD:-agentos_app_dev_only}@postgres:5432/agentos
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      CONNECTOR_ENCRYPTION_KEY: ${CONNECTOR_ENCRYPTION_KEY:-}
+      CONNECTOR_ENCRYPTION_KEY_VERSION: ${CONNECTOR_ENCRYPTION_KEY_VERSION:-v1}
     depends_on:
       db-bootstrap:
         condition: service_completed_successfully
