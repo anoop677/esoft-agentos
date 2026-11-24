@@ -71,7 +71,7 @@ async def test_tool_execution_ledger_is_tenant_isolated():
                     (tenant_id, run_id, connector_id, tool_id, action,
                      idempotency_key, arguments, status, output, completed_at)
                 VALUES ($1, $2, $3, 'erpnext.items.list', 'list', $4,
-                        jsonb_build_object('connector_id', $3::text),
+                        jsonb_build_object('connector_id', $3::uuid::text),
                         'succeeded', '{"data":[]}'::jsonb, now())
                 """,
                 tenant_a, run_id, connector_id, f"rls-tool-execution-{uuid4()}",
