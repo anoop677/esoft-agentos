@@ -76,7 +76,10 @@ async def _event(connection, principal, run_id, event_type, details):
     )
 
 
-async def _policy_context(connection, principal, run_id, tool_id, action):
+async def _policy_context(
+    connection, principal, run_id, tool_id, action,
+    *, exclude_execution_id: str | None = None, allow_completed: bool = False,
+):
     row = await connection.fetchrow(
         """
         SELECT r.id, r.status, a.status AS agent_status,
@@ -97,7 +100,7 @@ async def _policy_context(connection, principal, run_id, tool_id, action):
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Agent run not found")
-    if row["status"] not in {"queued", "running"}:
+    if not allow_completed and row["status"] not in {"queued", "running"}:
         raise HTTPException(status_code=409, detail="Tool execution requires an active run")
 
     permissions = _json(row["tool_permissions"])
@@ -110,8 +113,9 @@ async def _policy_context(connection, principal, run_id, tool_id, action):
             'tool_proposal_authorized', 'tool_execution_started'
           )
           AND details->>'tool_id' = $3
+          AND ($4::text IS NULL OR details->>'execution_id' <> $4)
         """,
-        principal.tenant_id, run_id, tool_id,
+        principal.tenant_id, run_id, tool_id, exclude_execution_id,
     )
     decision = evaluate_tool_proposal(
         agent_status=row["agent_status"],
@@ -162,8 +166,33 @@ async def _reserve_and_call(
             if approval_id is not None and role not in {"owner", "admin"}:
                 raise HTTPException(status_code=403, detail="Tenant administrator role required")
 
+            existing = await connection.fetchrow(
+                """
+                SELECT id, run_id, approval_id, connector_id, tool_id, action,
+                       arguments, status, output
+                FROM public.agent_tool_executions
+                WHERE tenant_id = $1 AND idempotency_key = $2
+                FOR UPDATE
+                """,
+                principal.tenant_id, idempotency_key,
+            )
+            if existing is not None and (
+                existing["run_id"] != run_id
+                or existing["approval_id"] != approval_id
+                or existing["connector_id"] != connector_id
+                or existing["tool_id"] != tool_id
+                or existing["action"] != action
+                or _json(existing["arguments"]) != sanitize_arguments(arguments)
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Idempotency-Key was already used for a different tool request",
+                )
+
             decision = await _policy_context(
-                connection, principal, run_id, tool_id, action
+                connection, principal, run_id, tool_id, action,
+                exclude_execution_id=str(existing["id"]) if existing else None,
+                allow_completed=existing is not None,
             )
             if decision.approval_required and approval_id is None:
                 safe_arguments = sanitize_arguments(arguments)
@@ -223,11 +252,6 @@ async def _reserve_and_call(
                 if stored_arguments != sanitize_arguments(arguments):
                     raise HTTPException(status_code=409, detail="Execution arguments differ from approved arguments")
 
-            existing = await connection.fetchrow(
-                """SELECT id, status, output FROM public.agent_tool_executions
-                   WHERE tenant_id = $1 AND idempotency_key = $2""",
-                principal.tenant_id, idempotency_key,
-            )
             if existing is not None:
                 if existing["status"] == "succeeded":
                     return {
