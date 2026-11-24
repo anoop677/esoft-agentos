@@ -234,7 +234,9 @@ class AgentWorker:
                     self.worker_id,
                 )
 
-    async def record_tool_proposals(self, tenant_id: str, run_id, proposals: list[dict]) -> list[dict]:
+    async def record_tool_proposals(
+        self, tenant_id: str, run_id, proposals: list[dict]
+    ) -> list[dict]:
         """Validate model proposals and create tenant-scoped human approvals.
 
         Worker-originated model calls are deliberately never executed inline.
@@ -265,7 +267,11 @@ class AgentWorker:
             if run is None or run["status"] not in {"running", "queued"}:
                 raise RuntimeError("Run is no longer eligible for tool proposals")
 
-            manifest = json.loads(run["manifest"]) if isinstance(run["manifest"], str) else run["manifest"]
+            manifest = (
+                json.loads(run["manifest"])
+                if isinstance(run["manifest"], str)
+                else run["manifest"]
+            )
             permissions = (
                 json.loads(run["tool_permissions"])
                 if isinstance(run["tool_permissions"], str)
@@ -281,7 +287,10 @@ class AgentWorker:
                 try:
                     validate_tool_arguments(tool_id, "list", arguments)
                 except (ToolExecutionError, TypeError):
-                    recorded.append({"status": "rejected", "reason": "Tool arguments failed validation"})
+                    recorded.append({
+                        "status": "rejected",
+                        "reason": "Tool arguments failed validation",
+                    })
                     continue
 
                 catalog = await connection.fetchrow(
@@ -318,7 +327,11 @@ class AgentWorker:
                         tenant_id, run_id,
                         json.dumps({"tool_id": tool_id, "reason": decision.reason}),
                     )
-                    recorded.append({"tool_id": tool_id, "status": "rejected", "reason": decision.reason})
+                    recorded.append({
+                        "tool_id": tool_id,
+                        "status": "rejected",
+                        "reason": decision.reason,
+                    })
                     continue
 
                 safe_arguments = sanitize_arguments(arguments)
