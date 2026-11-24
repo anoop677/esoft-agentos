@@ -119,9 +119,16 @@ class ModelGateway:
             "model": model,
             "instructions": (
                 instructions
-                + "\n\nYou are running in a restricted AgentOS execution environment. "
-                "You cannot call tools, access external systems, or perform side effects. "
-                "Return a concise answer based only on the supplied input."
+                + (
+                    "\n\nYou are running in AgentOS. You may propose only the fixed "
+                    "read-only ERPNext functions supplied in the tool catalog. Never "
+                    "invent connectors, identifiers, URLs, HTTP methods, filters, or actions. "
+                    "A proposal is not execution; a tenant administrator must approve it."
+                    if enable_tools
+                    else "\n\nYou are running in a restricted AgentOS execution environment. "
+                    "You cannot call tools, access external systems, or perform side effects. "
+                    "Return a concise answer based only on the supplied input."
+                )
             ),
             "input": json.dumps(input_payload, ensure_ascii=False),
             "max_output_tokens": max_output_tokens,
@@ -152,9 +159,6 @@ class ModelGateway:
                     if content.get("type") == "output_text":
                         fragments.append(content.get("text", ""))
             output_text = "\n".join(fragments)
-        if not output_text:
-            raise ModelGatewayError("Model provider returned no text output")
-
         tool_calls = []
         for item in data.get("output", []):
             if item.get("type") != "function_call":
@@ -176,9 +180,12 @@ class ModelGateway:
                 "call_id": item.get("call_id"),
             })
 
+        if not output_text and not tool_calls:
+            raise ModelGatewayError("Model provider returned no text or tool proposal")
+
         usage = data.get("usage") or {}
         return {
-            "text": output_text,
+            "text": output_text or "",
             "tool_calls": tool_calls,
             "provider": "openai",
             "model": data.get("model", model),
