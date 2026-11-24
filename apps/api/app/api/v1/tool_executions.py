@@ -100,8 +100,10 @@ async def _policy_context(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Agent run not found")
-    if not allow_completed and row["status"] not in {"queued", "running"}:
-        raise HTTPException(status_code=409, detail="Tool execution requires an active run")
+    if row["status"] not in {"queued", "running"} and not (
+        allow_completed and row["status"] == "succeeded"
+    ):
+        raise HTTPException(status_code=409, detail="Tool execution requires an active or successfully completed run")
 
     permissions = _json(row["tool_permissions"])
     manifest = _json(row["manifest"])
@@ -189,10 +191,23 @@ async def _reserve_and_call(
                     detail="Idempotency-Key was already used for a different tool request",
                 )
 
+            connector = await connection.fetchrow(
+                """
+                SELECT connector_type, status
+                FROM public.agent_connectors
+                WHERE tenant_id = $1 AND id = $2
+                """,
+                principal.tenant_id, connector_id,
+            )
+            if connector is None:
+                raise HTTPException(status_code=404, detail="Connector not found in this tenant")
+            if connector["connector_type"] != "erpnext" or connector["status"] != "active":
+                raise HTTPException(status_code=409, detail="ERPNext connector must be active")
+
             decision = await _policy_context(
                 connection, principal, run_id, tool_id, action,
                 exclude_execution_id=str(existing["id"]) if existing else None,
-                allow_completed=existing is not None,
+                allow_completed=approval_id is not None or existing is not None,
             )
             if decision.approval_required and approval_id is None:
                 safe_arguments = sanitize_arguments(arguments)
