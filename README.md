@@ -176,3 +176,20 @@ API endpoints:
 - `POST /api/v1/approvals/{approval_id}/execute` — execute an already approved ERPNext read action (tenant owner/admin only).
 
 This milestone does not wire model-generated tool calls into the worker loop, and it does not add ERPNext write operations. The API execution route is the controlled boundary for a future orchestrator integration. CI uses unit tests and mocked HTTP only; it does not contact a live ERPNext instance.
+
+
+### Worker tool proposals and approval
+
+When \`TOOL_EXECUTION_ENABLED=true\`, the worker exposes only four strict ERPNext
+read-only function schemas to the model: Items, Warehouses, Stock Bins, and
+Suppliers. Model output is treated as an untrusted proposal. The worker validates
+the tool ID and bounded arguments against the server-side registry, rechecks the
+tenant kill switch, agent status, immutable version permissions, catalog state,
+autonomy level, risk tier, and per-run call limit, then records an approval
+request. It does not perform the external request.
+
+A tenant owner/admin must review and approve the exact proposal in the approval
+API before explicitly invoking the approved execution endpoint. The worker does
+not automatically execute approved proposals or resume the model with tool
+results in this milestone. With the flag unset (the default), no tool schemas
+are sent to the model.
