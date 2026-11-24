@@ -5,16 +5,11 @@ from uuid import UUID
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator
-
-from pydantic import SecretStr
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 from app.core.auth import Principal, get_current_principal
 from app.core.config import get_settings
-from app.infrastructure.credential_vault import (
-    EncryptedCredentials,
-    encrypt_credentials,
-)
+from app.infrastructure.credential_vault import encrypt_credentials
 
 from app.infrastructure.connectors import (
     get_connector_adapter,
