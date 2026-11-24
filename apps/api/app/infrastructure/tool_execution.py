@@ -1,12 +1,12 @@
 """Allowlisted, bounded ERPNext tool dispatch. No model-supplied URL or DocType is accepted."""
 from uuid import UUID
 
+from app.core.config import Settings
 from app.infrastructure.connector_factory import (
     ConnectorNotReadyError,
     build_erpnext_readonly_client,
 )
-from app.infrastructure.erpnext_client import ERPNextConnectorError
-from app.core.config import Settings
+from app.infrastructure.erpnext_client import ERPNextConnectorError, ERPNextReadOnlyClient
 
 
 TOOL_METHODS = {
@@ -44,7 +44,7 @@ def validate_tool_arguments(tool_id: str, action: str, arguments: dict) -> tuple
     return connector_id, limit, start
 
 
-async def execute_erpnext_tool(
+async def prepare_erpnext_tool(
     connection,
     *,
     settings: Settings,
@@ -52,7 +52,8 @@ async def execute_erpnext_tool(
     tool_id: str,
     action: str,
     arguments: dict,
-) -> list[dict]:
+) -> tuple[ERPNextReadOnlyClient, int, int, str]:
+    """Decrypt credentials and construct the client; perform no network I/O here."""
     connector_id, limit, start = validate_tool_arguments(tool_id, action, arguments)
     try:
         client = await build_erpnext_readonly_client(
@@ -63,10 +64,4 @@ async def execute_erpnext_tool(
         )
     except ConnectorNotReadyError as exc:
         raise ToolExecutionError(str(exc)) from exc
-
-    async with client:
-        method = getattr(client, TOOL_METHODS[tool_id])
-        try:
-            return await method(limit=limit, start=start)
-        except (ERPNextConnectorError, ValueError) as exc:
-            raise ToolExecutionError(str(exc)) from exc
+    return client, limit, start, TOOL_METHODS[tool_id]
