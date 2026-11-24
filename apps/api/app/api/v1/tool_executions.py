@@ -1,6 +1,7 @@
 """Policy-controlled execution endpoints for the fixed ERPNext read-only tool set."""
 import json
 import logging
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -363,8 +364,7 @@ async def _reserve_and_call(
                 })
         raise HTTPException(status_code=502, detail="Tool execution failed") from exc
 
-    async with pool.acquire() as connection:
-        async with connection.transaction():
+    async with pool.acquire() as connection, connection.transaction():
             await connection.execute(
                 "SELECT set_config('app.tenant_id', $1, true)", principal.tenant_id
             )
@@ -389,8 +389,8 @@ async def execute_tool_for_run(
     run_id: UUID,
     payload: ToolExecutionRequest,
     request: Request,
-    principal: Principal = Depends(get_current_principal),
-    idempotency_key: str = Header(alias="Idempotency-Key", min_length=16, max_length=128),
+    principal: Annotated[Principal, Depends(get_current_principal)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128)],
 ):
     return await _reserve_and_call(
         request, principal, run_id=run_id, approval_id=None,
