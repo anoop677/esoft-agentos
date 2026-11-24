@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS public.agent_tool_executions (
     arguments JSONB NOT NULL DEFAULT '{}'::jsonb,
     output JSONB,
     error_code TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at TIMESTAMPTZ,
     FOREIGN KEY (tenant_id, run_id)
