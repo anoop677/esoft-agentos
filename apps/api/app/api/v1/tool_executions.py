@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.core.auth import Principal, get_current_principal
 from app.core.config import get_settings
 from app.infrastructure.policy import evaluate_tool_proposal, sanitize_arguments
+from app.infrastructure.erpnext_client import ERPNextConnectorError
 from app.infrastructure.tool_execution import (
     ToolExecutionError,
     prepare_erpnext_tool,
@@ -269,8 +270,9 @@ async def _reserve_and_call(
         async with client:
             try:
                 data = await getattr(client, method_name)(limit=limit, start=start)
-            except (ValueError, Exception) as exc:
-                # Connector/client exceptions are converted to a safe execution error.
+            except ERPNextConnectorError as exc:
+                raise ToolExecutionError(str(exc)) from exc
+            except Exception as exc:
                 raise ToolExecutionError("ERPNext read request failed") from exc
         output = {"data": data}
     except ToolExecutionError as exc:
