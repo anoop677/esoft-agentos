@@ -12,7 +12,7 @@ from app.infrastructure.connectors import (
 def test_erpnext_adapter_is_registered_as_read_only_contract():
     adapter = get_connector_adapter("erpnext")
     assert isinstance(adapter, ERPNextReadOnlyAdapter)
-    assert adapter.descriptor.mode == "configuration_only"
+    assert adapter.descriptor.mode == "policy_controlled_read_only"
     assert all(capability.endswith(".read") for capability in adapter.descriptor.capabilities)
 
 

@@ -28,9 +28,9 @@ class ERPNextReadOnlyAdapter:
     descriptor = ConnectorDescriptor(
         connector_type="erpnext",
         display_name="ERPNext (read-only)",
-        description="Read-only ERPNext connector contract. Live API access is not enabled yet.",
+        description="Fixed ERPNext read-only list tools; execution is gated by platform policy and a default-off feature flag.",
         capabilities=("items.read", "warehouses.read", "stock_bins.read", "suppliers.read"),
-        mode="configuration_only",
+        mode="policy_controlled_read_only",
     )
 
     def validate_configuration(self, configuration: dict) -> list[str]:

@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     connector_encryption_key: str | None = None
     connector_encryption_key_version: str = "v1"
     connector_allowed_hosts: str = ""
+    tool_execution_enabled: bool = False
 
     model_config = SettingsConfigDict(
         env_file=".env",

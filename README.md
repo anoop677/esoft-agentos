@@ -153,3 +153,26 @@ All feature work should be developed on a feature branch and merged through revi
 ## License
 
 No open-source license has been assigned yet. All rights remain with the repository owner unless a license is added.
+
+
+## Policy-controlled ERPNext read-only tool execution
+
+The API now has an initial execution path for four fixed ERPNext list tools:
+
+- `erpnext.items.list`
+- `erpnext.warehouses.list`
+- `erpnext.stock_bins.list`
+- `erpnext.suppliers.list`
+
+The execution endpoint re-evaluates the tenant kill switch, agent status, immutable agent-version tool permissions, catalog status, autonomy level, risk tier, and per-run call limit. Arguments accept only a tenant-owned `connector_id`, `limit` (1–100), and `start` (0–1,000,000). The HTTP client still fixes the resource paths and GET method.
+
+Execution is **disabled by default**. Set `TOOL_EXECUTION_ENABLED=true` only after configuring the connector encryption key, exact `CONNECTOR_ALLOWED_HOSTS`, and network egress controls that block private, loopback, link-local, and cloud metadata destinations. The hostname allowlist is not a replacement for egress filtering or DNS-rebinding protection.
+
+A tool permission with `approval_required=true` creates a pending approval. A tenant owner/admin must approve it and call the approval execution endpoint; approval alone never triggers a remote request. Calls requiring no approval still need the feature flag and an `Idempotency-Key` header. Execution attempts are recorded in a tenant-RLS-protected ledger. A repeated successful idempotency key returns the stored result; a started/failed key is never automatically replayed, so interrupted attempts require operator review.
+
+API endpoints:
+
+- `POST /api/v1/runs/{run_id}/tool-executions` — propose or execute an allowed read-only tool.
+- `POST /api/v1/approvals/{approval_id}/execute` — execute an already approved ERPNext read action (tenant owner/admin only).
+
+This milestone does not wire model-generated tool calls into the worker loop, and it does not add ERPNext write operations. The API execution route is the controlled boundary for a future orchestrator integration. CI uses unit tests and mocked HTTP only; it does not contact a live ERPNext instance.
