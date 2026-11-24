@@ -73,8 +73,6 @@ async def test_model_gateway_parses_responses_api_text_and_usage():
     assert result["text"] == "Inventory looks healthy."
     assert result["usage"] == {"input_tokens": 23, "output_tokens": 8}
 
-
-
 @pytest.mark.asyncio
 async def test_model_gateway_exposes_only_fixed_tools_and_parses_proposal():
     import json
@@ -140,3 +138,34 @@ async def test_model_gateway_exposes_only_fixed_tools_and_parses_proposal():
         },
         "call_id": "call_123",
     }]
+
+
+
+@pytest.mark.asyncio
+async def test_model_gateway_rejects_tool_call_when_disabled():
+    import httpx
+
+    gateway = ModelGateway(
+        openai_api_key="test-key",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "output": [{
+                        "type": "function_call",
+                        "name": "erpnext_items_list",
+                        "arguments": "{}",
+                    }]
+                },
+            )
+        ),
+    )
+    with pytest.raises(ModelGatewayError, match="disabled"):
+        await gateway.generate(
+            provider="openai",
+            model="gpt-4.1-mini",
+            instructions="Do not use tools",
+            input_payload={},
+            max_output_tokens=100,
+            temperature=0,
+        )
