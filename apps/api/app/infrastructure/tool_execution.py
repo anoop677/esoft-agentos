@@ -6,7 +6,7 @@ from app.infrastructure.connector_factory import (
     ConnectorNotReadyError,
     build_erpnext_readonly_client,
 )
-from app.infrastructure.erpnext_client import ERPNextConnectorError, ERPNextReadOnlyClient
+from app.infrastructure.erpnext_client import ERPNextReadOnlyClient
 
 
 TOOL_METHODS = {
