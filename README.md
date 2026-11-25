@@ -189,10 +189,11 @@ autonomy level, risk tier, and per-run call limit, then records an approval
 request. It does not perform the external request.
 
 A tenant owner/admin must review and approve the exact proposal in the approval
-API before explicitly invoking the approved execution endpoint. The worker does
-not automatically execute approved proposals or resume the model with tool
-results in this milestone. With the flag unset (the default), no tool schemas
-are sent to the model.
+API before explicitly invoking the approved execution endpoint. After successful
+execution, AgentOS stores the result and requeues the same run so the model can
+continue with the function output. Only one tool call is accepted per model turn,
+and a run is limited to three tool-result continuation rounds. With the flag
+unset (the default), no tool schemas are sent to the model.
 
 
 ### Approved tool result continuation
