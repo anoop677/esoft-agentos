@@ -109,6 +109,7 @@ class ModelGateway:
         max_output_tokens: int,
         temperature: float,
         enable_tools: bool = False,
+        previous_response_id: str | None = None,
     ) -> dict[str, Any]:
         if provider != "openai":
             raise ModelGatewayError(f"Provider '{provider}' is not enabled in this runtime")
@@ -130,13 +131,20 @@ class ModelGateway:
                     "Return a concise answer based only on the supplied input."
                 )
             ),
-            "input": json.dumps(input_payload, ensure_ascii=False),
+            "input": (
+                input_payload
+                if isinstance(input_payload, list)
+                else json.dumps(input_payload, ensure_ascii=False)
+            ),
             "max_output_tokens": max_output_tokens,
             "temperature": temperature,
         }
+        if previous_response_id:
+            request_body["previous_response_id"] = previous_response_id
         if enable_tools:
             request_body["tools"] = ERPNEXT_TOOL_DEFINITIONS
             request_body["tool_choice"] = "auto"
+            request_body["parallel_tool_calls"] = False
         try:
             async with httpx.AsyncClient(
                 timeout=self.timeout_seconds, transport=self.transport
@@ -179,15 +187,24 @@ class ModelGateway:
                 raise ModelGatewayError("Model returned invalid tool arguments") from exc
             if not isinstance(arguments, dict):
                 raise ModelGatewayError("Model returned invalid tool arguments")
+            call_id = item.get("call_id")
+            if not isinstance(call_id, str) or not call_id:
+                raise ModelGatewayError("Model returned a tool call without a call ID")
             tool_calls.append({
                 "name": name,
                 "tool_id": MODEL_TOOL_MAP[name],
                 "arguments": arguments,
-                "call_id": item.get("call_id"),
+                "call_id": call_id,
             })
+
+        if len(tool_calls) > 1:
+            raise ModelGatewayError("Only one tool call is supported per model turn")
 
         if not output_text and not tool_calls:
             raise ModelGatewayError("Model provider returned no text or tool proposal")
+        response_id = data.get("id")
+        if tool_calls and not response_id:
+            raise ModelGatewayError("Model tool proposal is missing its response ID")
 
         usage = data.get("usage") or {}
         return {
@@ -195,6 +212,7 @@ class ModelGateway:
             "tool_calls": tool_calls,
             "provider": "openai",
             "model": data.get("model", model),
+            "response_id": response_id,
             "usage": {
                 "input_tokens": usage.get("input_tokens"),
                 "output_tokens": usage.get("output_tokens"),

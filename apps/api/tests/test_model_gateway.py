@@ -96,6 +96,7 @@ async def test_model_gateway_exposes_only_fixed_tools_and_parses_proposal():
         return httpx.Response(
             200,
             json={
+                "id": "resp_tool_123",
                 "model": "gpt-4.1-mini",
                 "output": [
                     {
@@ -138,7 +139,7 @@ async def test_model_gateway_exposes_only_fixed_tools_and_parses_proposal():
         },
         "call_id": "call_123",
     }]
-
+    assert result["response_id"] == "resp_tool_123"
 
 
 @pytest.mark.asyncio
@@ -169,3 +170,58 @@ async def test_model_gateway_rejects_tool_call_when_disabled():
             max_output_tokens=100,
             temperature=0,
         )
+
+
+
+@pytest.mark.asyncio
+async def test_model_gateway_sends_function_output_to_previous_response():
+    import json
+
+    import httpx
+
+    def handler(request):
+        body = json.loads(request.content)
+        assert body["previous_response_id"] == "resp_previous"
+        assert body["input"] == [{
+            "type": "function_call_output",
+            "call_id": "call_123",
+            "output": "[{\"item_code\":\"SKU-1\"}]",
+        }]
+        assert body["parallel_tool_calls"] is False
+        return httpx.Response(
+            200,
+            json={
+                "id": "resp_followup",
+                "model": "gpt-4.1-mini",
+                "output": [{
+                    "content": [{
+                        "type": "output_text",
+                        "text": "SKU-1 is available.",
+                    }]
+                }],
+                "usage": {"input_tokens": 30, "output_tokens": 10},
+            },
+        )
+
+    gateway = ModelGateway(
+        openai_api_key="test-key",
+        transport=httpx.MockTransport(handler),
+    )
+    result = await gateway.generate(
+        provider="openai",
+        model="gpt-4.1-mini",
+        instructions="Analyze inventory",
+        input_payload=[{
+            "type": "function_call_output",
+            "call_id": "call_123",
+            "output": "[{\"item_code\":\"SKU-1\"}]",
+        }],
+        max_output_tokens=100,
+        temperature=0,
+        enable_tools=True,
+        previous_response_id="resp_previous",
+    )
+
+    assert result["text"] == "SKU-1 is available."
+    assert result["response_id"] == "resp_followup"
+    assert result["tool_calls"] == []

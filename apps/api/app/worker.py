@@ -15,6 +15,7 @@ from app.infrastructure.tool_execution import ToolExecutionError, validate_tool_
 logger = logging.getLogger("agentos.worker")
 LEASE_SECONDS = 300
 POLL_SECONDS = 2
+MAX_TOOL_ROUNDS = 3
 
 
 class AgentWorker:
@@ -57,7 +58,8 @@ class AgentWorker:
             )
             return await connection.fetchrow(
                 """
-                SELECT r.id, r.status, r.input, r.attempt_count, r.max_attempts,
+                SELECT r.id, r.status, r.input, r.tool_context,
+                       r.attempt_count, r.max_attempts,
                        v.manifest, v.model_config, a.status AS agent_status,
                        COALESCE(c.agents_enabled, TRUE) AS agents_enabled
                 FROM public.agent_runs r
@@ -235,7 +237,7 @@ class AgentWorker:
                 )
 
     async def record_tool_proposals(
-        self, tenant_id: str, run_id, proposals: list[dict]
+        self, tenant_id: str, run_id, proposals: list[dict], response_id: str
     ) -> list[dict]:
         """Validate model proposals and create tenant-scoped human approvals.
 
@@ -243,6 +245,8 @@ class AgentWorker:
         Even when policy would permit autonomous read access, a human must
         approve the exact arguments before the API execution boundary can run.
         """
+        if not response_id:
+            raise ModelGatewayError("Model tool proposal is missing its response ID")
         recorded = []
         async with self.pool.acquire() as connection, connection.transaction():
             await connection.execute(
@@ -341,9 +345,11 @@ class AgentWorker:
                     WHERE tenant_id = $1 AND run_id = $2 AND tool_id = $3
                       AND action = 'list' AND status = 'pending'
                       AND arguments = $4::jsonb
+                      AND model_response_id = $5 AND model_call_id = $6
                     ORDER BY created_at DESC LIMIT 1
                     """,
                     tenant_id, run_id, tool_id, json.dumps(safe_arguments),
+                    response_id, proposal["call_id"],
                 )
                 if existing:
                     approval_id = existing["id"]
@@ -351,11 +357,13 @@ class AgentWorker:
                     approval_id = await connection.fetchval(
                         """
                         INSERT INTO public.agent_approvals
-                            (tenant_id, run_id, tool_id, action, arguments, requested_by)
-                        VALUES ($1, $2, $3, 'list', $4::jsonb, 'agent-worker')
+                            (tenant_id, run_id, tool_id, action, arguments, requested_by,
+                             model_response_id, model_call_id)
+                        VALUES ($1, $2, $3, 'list', $4::jsonb, 'agent-worker', $5, $6)
                         RETURNING id
                         """,
                         tenant_id, run_id, tool_id, json.dumps(safe_arguments),
+                        response_id, proposal["call_id"],
                     )
                     await connection.execute(
                         """
@@ -428,6 +436,19 @@ class AgentWorker:
             # the separately authorized execution API performs the external request.
             if model_config.get("provider") != "openai":
                 raise ModelGatewayError("Only the OpenAI provider is enabled in this worker")
+            tool_context = record["tool_context"]
+            if isinstance(tool_context, str):
+                tool_context = json.loads(tool_context)
+            previous_response_id = None
+            if tool_context:
+                latest_tool_result = tool_context[-1]
+                previous_response_id = latest_tool_result["response_id"]
+                input_payload = [{
+                    "type": "function_call_output",
+                    "call_id": latest_tool_result["call_id"],
+                    "output": json.dumps(latest_tool_result["output"], ensure_ascii=False),
+                }]
+
             result = await self.gateway.generate(
                 provider=model_config["provider"],
                 model=model_config["model"],
@@ -435,12 +456,16 @@ class AgentWorker:
                 input_payload=input_payload,
                 max_output_tokens=model_config.get("max_output_tokens", 2048),
                 temperature=model_config.get("temperature", 0.2),
-                enable_tools=get_settings().tool_execution_enabled,
+                enable_tools=(
+                    get_settings().tool_execution_enabled
+                    and len(tool_context) < MAX_TOOL_ROUNDS
+                ),
+                previous_response_id=previous_response_id,
             )
             proposals = result.pop("tool_calls", [])
             if proposals:
                 result["tool_proposals"] = await self.record_tool_proposals(
-                    tenant_id, run_id, proposals
+                    tenant_id, run_id, proposals, result.get("response_id")
                 )
             await self.complete(tenant_id, run_id, result)
         except Exception as exc:

@@ -150,6 +150,7 @@ async def _reserve_and_call(
     action: str,
     arguments: dict,
     idempotency_key: str,
+    continuation: dict | None = None,
 ):
     settings = get_settings()
     if not settings.tool_execution_enabled:
@@ -369,6 +370,7 @@ async def _reserve_and_call(
             })
         raise HTTPException(status_code=502, detail="Tool execution failed") from exc
 
+    continuation_queued = False
     async with pool.acquire() as connection, connection.transaction():
         await connection.execute(
             "SELECT set_config('app.tenant_id', $1, true)", principal.tenant_id
@@ -383,9 +385,56 @@ async def _reserve_and_call(
             "execution_id": str(execution_id), "tool_id": tool_id,
             "record_count": len(data),
         })
+        if continuation and continuation.get("response_id") and continuation.get("call_id"):
+            resumed = await connection.fetchrow(
+                """
+                UPDATE public.agent_runs
+                SET tool_context = tool_context || jsonb_build_array(
+                        jsonb_build_object(
+                            'response_id', $3,
+                            'call_id', $4,
+                            'output', $5::jsonb
+                        )
+                    ),
+                    tool_round_count = tool_round_count + 1,
+                    max_attempts = max_attempts + 1,
+                    status = 'queued',
+                    error_code = NULL,
+                    error_message = NULL,
+                    finished_at = NULL,
+                    updated_at = now()
+                WHERE tenant_id = $1 AND id = $2
+                  AND status = 'succeeded'
+                  AND tool_round_count < 3
+                RETURNING id
+                """,
+                principal.tenant_id, run_id, continuation["response_id"],
+                continuation["call_id"], json.dumps(data),
+            )
+            if resumed:
+                await connection.execute(
+                    """
+                    INSERT INTO public.agent_run_queue (tenant_id, run_id)
+                    VALUES ($1, $2)
+                    ON CONFLICT (run_id) DO UPDATE
+                    SET status = 'queued', locked_by = NULL, locked_at = NULL
+                    """,
+                    principal.tenant_id, run_id,
+                )
+                await _event(connection, principal, run_id, "tool_result_queued_for_model", {
+                    "execution_id": str(execution_id),
+                    "tool_round": "incremented",
+                })
+                continuation_queued = True
+            else:
+                await _event(connection, principal, run_id, "tool_continuation_limit_reached", {
+                    "execution_id": str(execution_id),
+                    "max_tool_rounds": 3,
+                })
     return {
         "status": "succeeded", "execution_id": str(execution_id),
         "data": data, "idempotent_replay": False,
+        "continuation_queued": continuation_queued,
     }
 
 
@@ -419,7 +468,8 @@ async def execute_approved_tool(
         if role not in {"owner", "admin"}:
             raise HTTPException(status_code=403, detail="Tenant administrator role required")
         approval = await connection.fetchrow(
-            """SELECT run_id, tool_id, action, arguments
+            """SELECT run_id, tool_id, action, arguments,
+                      model_response_id, model_call_id
                FROM public.agent_approvals
                WHERE tenant_id = $1 AND id = $2""",
             principal.tenant_id, approval_id,
@@ -430,8 +480,13 @@ async def execute_approved_tool(
         run_id = approval["run_id"]
         tool_id = approval["tool_id"]
         action = approval["action"]
+        continuation = {
+            "response_id": approval["model_response_id"],
+            "call_id": approval["model_call_id"],
+        }
     return await _reserve_and_call(
         request, principal, run_id=run_id, approval_id=approval_id,
         tool_id=tool_id, action=action, arguments=arguments,
         idempotency_key=f"approval:{approval_id}",
+        continuation=continuation,
     )

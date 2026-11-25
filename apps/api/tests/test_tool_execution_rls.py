@@ -50,11 +50,25 @@ async def test_tool_execution_ledger_is_tenant_isolated():
             run_id = await admin.fetchval(
                 """
                 INSERT INTO public.agent_runs
-                    (tenant_id, agent_id, agent_version_id, requested_by, input)
-                VALUES ($1, $2, $3, 'tool-execution-test', '{}'::jsonb)
+                    (tenant_id, agent_id, agent_version_id, requested_by, input,
+                     tool_context, tool_round_count)
+                VALUES ($1, $2, $3, 'tool-execution-test', '{}'::jsonb,
+                        '[{"response_id":"resp_test","call_id":"call_test","output":[]}]'::jsonb,
+                        1)
                 RETURNING id
                 """,
                 tenant_a, agent_id, version_id,
+            )
+            approval_id = await admin.fetchval(
+                """
+                INSERT INTO public.agent_approvals
+                    (tenant_id, run_id, tool_id, action, arguments, requested_by,
+                     model_response_id, model_call_id)
+                VALUES ($1, $2, 'erpnext.items.list', 'list', '{}'::jsonb,
+                        'tool-execution-test', 'resp_test', 'call_test')
+                RETURNING id
+                """,
+                tenant_a, run_id,
             )
             connector_id = await admin.fetchval(
                 """
@@ -82,11 +96,27 @@ async def test_tool_execution_ledger_is_tenant_isolated():
             assert await app.fetchval(
                 "SELECT count(*) FROM public.agent_tool_executions"
             ) == 1
+            assert await app.fetchval(
+                "SELECT count(*) FROM public.agent_approvals WHERE id = $1",
+                approval_id,
+            ) == 1
+            assert await app.fetchval(
+                "SELECT tool_round_count FROM public.agent_runs WHERE id = $1",
+                run_id,
+            ) == 1
 
         async with app.transaction():
             await app.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_b)
             assert await app.fetchval(
                 "SELECT count(*) FROM public.agent_tool_executions"
+            ) == 0
+            assert await app.fetchval(
+                "SELECT count(*) FROM public.agent_approvals WHERE id = $1",
+                approval_id,
+            ) == 0
+            assert await app.fetchval(
+                "SELECT count(*) FROM public.agent_runs WHERE id = $1",
+                run_id,
             ) == 0
 
     finally:
