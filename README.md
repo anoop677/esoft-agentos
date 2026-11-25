@@ -193,3 +193,16 @@ API before explicitly invoking the approved execution endpoint. The worker does
 not automatically execute approved proposals or resume the model with tool
 results in this milestone. With the flag unset (the default), no tool schemas
 are sent to the model.
+
+
+### Approved tool result continuation
+
+A model-generated ERPNext function call is correlated to its OpenAI Responses API
+response and function-call IDs. After a tenant owner/admin approves and executes
+that exact request, AgentOS stores the result in the tenant-scoped run context and
+requeues the run. The worker sends the function output to the same Responses API
+conversation using `previous_response_id`, allowing the model to continue its
+analysis and either return a final answer or propose another registered read-only
+tool. Only one tool call is accepted per model turn, and the platform caps a run
+at three tool-result continuation rounds. All execution remains default-off and
+human approval remains required for model-originated calls.
