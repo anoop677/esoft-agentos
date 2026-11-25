@@ -202,6 +202,9 @@ class ModelGateway:
 
         if not output_text and not tool_calls:
             raise ModelGatewayError("Model provider returned no text or tool proposal")
+        response_id = data.get("id")
+        if tool_calls and not response_id:
+            raise ModelGatewayError("Model tool proposal is missing its response ID")
 
         usage = data.get("usage") or {}
         return {
@@ -209,7 +212,7 @@ class ModelGateway:
             "tool_calls": tool_calls,
             "provider": "openai",
             "model": data.get("model", model),
-            "response_id": data.get("id"),
+            "response_id": response_id,
             "usage": {
                 "input_tokens": usage.get("input_tokens"),
                 "output_tokens": usage.get("output_tokens"),
